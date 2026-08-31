@@ -1,11 +1,10 @@
 from datetime import date
-
 from pydantic import BaseModel
 
 
 class PassageiroCreate(BaseModel):
-    nome: str
-    data_nascimento: date
+    name: str
+    birth_date: date
     rg: str
     cpf: str
     facial: str | None = None

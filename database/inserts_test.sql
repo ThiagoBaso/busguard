@@ -1,3 +1,5 @@
+/* docker compose exec mysql mysql -uapp_user -p */
+
 INSERT INTO passengers (name)
 VALUES
     ('João'),
