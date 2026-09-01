@@ -25,7 +25,7 @@ def vehicle_access(data: VehicleAccess):
             "message": "passager " + data.action,
             "passager_id": data.passenger_id,
             "vehicle_id": data.vehicle_id,
-            "status": "ok"
+            "status": "ok" 
         }
 
     finally:

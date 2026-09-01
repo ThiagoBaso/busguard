@@ -1,13 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 import pymysql
 from app.database import get_connection
 from app.schemas.schemas import PassageiroCreate
+from app.security import require_role
 
 router = APIRouter(prefix="/passengers", tags=["passengers"])
 
 @router.post("/")
-def create_passenger(passenger: PassageiroCreate):
+def create_passenger(passenger: PassageiroCreate, current_user=Depends(require_role("admin"))):
     connection = get_connection()
     try:
         with connection.cursor() as cursor:
