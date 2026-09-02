@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.database import get_connection
-from security import verify_password, create_access_token
+from app.security import verify_password, create_access_token
 
 
 router = APIRouter(
@@ -57,6 +57,13 @@ def login(data: LoginRequest):
                 "access_token": token,
                 "token_type": "bearer"
             }
+        
+    except:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str("Erro!")
+        )
 
     finally:
         connection.close()

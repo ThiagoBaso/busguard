@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timedelta, timezone
-from jose import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -19,13 +18,19 @@ pwd_context = CryptContext(
 )
 
 
+def get_secret_key() -> str:
+    if not SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY environment variable is not configured")
+
+    return SECRET_KEY
+
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
-
 
 def create_access_token(user_id: int, role: str):
     expire = datetime.now(timezone.utc) + timedelta(
@@ -40,7 +45,7 @@ def create_access_token(user_id: int, role: str):
 
     return jwt.encode(
         payload,
-        SECRET_KEY,
+        get_secret_key(),
         algorithm=ALGORITHM
     )
 
@@ -66,7 +71,7 @@ def get_current_user(
 
         payload = jwt.decode(
             token,
-            SECRET_KEY,
+            get_secret_key(),
             algorithms=[ALGORITHM]
         )
 

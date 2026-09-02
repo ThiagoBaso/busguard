@@ -99,3 +99,13 @@ CREATE TABLE users (
     role ENUM('admin', 'driver', 'responsible') NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+INSERT INTO users
+(name, email, password_hash, role)
+VALUES
+(
+    'Administrador',
+    'admin@teste.com',
+    '$2b$12$8y/KnnlnomIVcf0i1YU2w.iQ6Bvt5MSQQw94l7GLdPF1M0lSfiUz6',
+    'admin'
+);
