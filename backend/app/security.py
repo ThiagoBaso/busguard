@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
@@ -5,6 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
+logger = logging.getLogger(__name__)
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -31,6 +33,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
+
 
 def create_access_token(user_id: int, role: str):
     expire = datetime.now(timezone.utc) + timedelta(
@@ -76,14 +79,22 @@ def get_current_user(
         )
 
         user_id = payload.get("sub")
+        role = payload.get("role")
 
-        if user_id is None:
+        if user_id is None or role is None:
             raise credentials_exception
 
         return {
             "id": int(user_id),
-            "role": payload.get("role")
+            "role": role
         }
+
+    except RuntimeError:
+        logger.exception("Authentication configuration error while validating token")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service is not configured"
+        )
 
     except (JWTError, ValueError):
         raise credentials_exception

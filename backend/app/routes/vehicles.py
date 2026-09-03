@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from app.database import get_connection
 from typing import Literal
 from pydantic import BaseModel
+from app.security import require_role
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
@@ -12,7 +13,7 @@ class VehicleAccess(BaseModel):
 
 
 @router.post("/access")
-def vehicle_access(data: VehicleAccess):
+def vehicle_access(data: VehicleAccess, current_user=Depends(require_role("admin"))):
 
     connection = get_connection()
     try:
@@ -32,7 +33,7 @@ def vehicle_access(data: VehicleAccess):
         connection.close()
 
 @router.get("/{vehicle_id}/passengers")
-def get_passengers(vehicle_id: int):
+def get_passengers(vehicle_id: int, current_user=Depends(require_role("admin"))):
 
     connection = get_connection()
 

@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException
+import logging
+
+import pymysql
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.database import get_connection
 from app.security import verify_password, create_access_token
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth",
@@ -16,12 +20,24 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def invalid_credentials_exception() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials",
+        headers={
+            "WWW-Authenticate": "Bearer"
+        }
+    )
+
+
 @router.post("/login")
 def login(data: LoginRequest):
 
-    connection = get_connection()
+    connection = None
 
     try:
+        connection = get_connection()
+
         with connection.cursor() as cursor:
 
             sql = """
@@ -34,19 +50,13 @@ def login(data: LoginRequest):
             user = cursor.fetchone()
 
             if not user:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid credentials"
-                )
+                raise invalid_credentials_exception()
 
             if not verify_password(
                 data.password,
                 user["password_hash"]
             ):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid credentials"
-                )
+                raise invalid_credentials_exception()
 
             token = create_access_token(
                 user_id=user["id"],
@@ -57,13 +67,31 @@ def login(data: LoginRequest):
                 "access_token": token,
                 "token_type": "bearer"
             }
-        
-    except:
 
+    except HTTPException:
+        raise
+
+    except pymysql.MySQLError:
+        logger.exception("Database error during login")
         raise HTTPException(
-            status_code=500,
-            detail=str("Erro!")
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable"
+        )
+
+    except RuntimeError:
+        logger.exception("Authentication configuration error during login")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service is not configured"
+        )
+
+    except Exception:
+        logger.exception("Unexpected authentication error during login")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected authentication error"
         )
 
     finally:
-        connection.close()
+        if connection:
+            connection.close()
