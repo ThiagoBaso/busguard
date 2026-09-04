@@ -19,6 +19,9 @@ pwd_context = CryptContext(
     deprecated="auto"
 )
 
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="/auth/login"
+)
 
 def get_secret_key() -> str:
     if not SECRET_KEY:
@@ -51,12 +54,6 @@ def create_access_token(user_id: int, role: str):
         get_secret_key(),
         algorithm=ALGORITHM
     )
-
-
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/auth/login"
-)
-
 
 def get_current_user(
     token: str = Depends(oauth2_scheme)

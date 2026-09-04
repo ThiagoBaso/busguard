@@ -95,3 +95,10 @@ def login(data: LoginRequest):
     finally:
         if connection:
             connection.close()
+
+@router.get("/me")
+def me():
+    return {
+        "message": "Authenticated user information",
+        "status": "ok"
+    }
