@@ -11,22 +11,22 @@
 
 -- ------------------------------------------------------------
 -- 1) users
--- role ENUM assumido: 'admin','motorista','responsavel','supervisor'
+-- role ENUM assumido: 'admin','driver','responsible','supervisor'
 -- ------------------------------------------------------------
 INSERT INTO users (id, name, email, password_hash, role, created_at, phone, cpf, rg) VALUES
 (1, 'Admin Sistema',      'admin@transportescolar.com',    '$2y$10$hashadminexemplo000000000000000000', 'admin',       '2026-01-05 08:00:00', '14998010001', '11122233344', '223344556'),
-(2, 'João Pereira',       'joao.pereira@transportescolar.com', '$2y$10$hashmotorista1exemplo00000000000', 'motorista',   '2026-01-06 09:15:00', '14998010002', '22233344455', '334455667'),
-(3, 'Carlos Menezes',     'carlos.menezes@transportescolar.com', '$2y$10$hashmotorista2exemplo00000000000', 'motorista',   '2026-01-06 09:20:00', '14998010003', '33344455566', '445566778'),
-(4, 'Maria Fernandes',    'maria.fernandes@email.com',      '$2y$10$hashresponsavel1exemplo0000000000', 'responsavel', '2026-01-10 10:00:00', '14998010004', '44455566677', '556677889'),
-(5, 'Ana Cristina Souza', 'ana.souza@email.com',            '$2y$10$hashresponsavel2exemplo0000000000', 'responsavel', '2026-01-10 10:10:00', '14998010005', '55566677788', '667788990'),
+(2, 'João Pereira',       'joao.pereira@transportescolar.com', '$2y$10$hashmotorista1exemplo00000000000', 'driver',   '2026-01-06 09:15:00', '14998010002', '22233344455', '334455667'),
+(3, 'Carlos Menezes',     'carlos.menezes@transportescolar.com', '$2y$10$hashmotorista2exemplo00000000000', 'driver',   '2026-01-06 09:20:00', '14998010003', '33344455566', '445566778'),
+(4, 'Maria Fernandes',    'maria.fernandes@email.com',      '$2y$10$hashresponsavel1exemplo0000000000', 'responsible', '2026-01-10 10:00:00', '14998010004', '44455566677', '556677889'),
+(5, 'Ana Cristina Souza', 'ana.souza@email.com',            '$2y$10$hashresponsavel2exemplo0000000000', 'responsible', '2026-01-10 10:10:00', '14998010005', '55566677788', '667788990'),
 (6, 'Pedro Almeida',      'pedro.almeida@transportescolar.com', '$2y$10$hashsupervisorexemplo000000000', 'supervisor',  '2026-01-07 08:30:00', '14998010006', '66677788899', '778899001');
 
 -- ------------------------------------------------------------
 -- 2) cnh (carteira de motorista) — status_cnh ENUM assumido: 'valida','vencida','suspensa'
 -- ------------------------------------------------------------
 INSERT INTO cnh (id_cnh, numero_registro, numero_espelho, categoria, data_emissao, data_validade, data_primeira_habilitacao, uf_emissao, observacoes, status_cnh, atualizado_em) VALUES
-(1, '12345678900', 'ESP001234', 'D', '2020-03-15', '2030-03-15', '2010-06-01', 'SP', 'Nenhuma restrição registrada.', 'valida', '2026-01-06 09:00:00'),
-(2, '98765432100', 'ESP005678', 'D', '2019-07-22', '2029-07-22', '2008-02-14', 'SP', 'Curso de transporte escolar concluído.', 'valida', '2026-01-06 09:05:00');
+(1, '12345678900', 'ESP001234', 'D', '2020-03-15', '2030-03-15', '2010-06-01', 'SP', 'Nenhuma restrição registrada.', 'Ativa', '2026-01-06 09:00:00'),
+(2, '98765432100', 'ESP005678', 'D', '2019-07-22', '2029-07-22', '2008-02-14', 'SP', 'Curso de transporte escolar concluído.', 'Ativa', '2026-01-06 09:05:00');
 
 -- ------------------------------------------------------------
 -- 3) drivers (motoristas)
@@ -90,11 +90,11 @@ INSERT INTO passengers_responsibles (id, passengers_id, responsible_id) VALUES
 (3, 2, 2);  -- Beatriz -> Ana
 
 -- ------------------------------------------------------------
--- 11) routes (rotas) — shift ENUM assumido: 'matutino','vespertino','noturno'
+-- 11) routes (rotas) — shift ENUM assumido: 'morning','afternoon','evening'
 -- ------------------------------------------------------------
 INSERT INTO routes (id, name, description, shift, active, created_at) VALUES
-(1, 'Rota Manhã - Jardim América/Vila Nova', 'Rota escolar matutina atendendo Jardim América e Vila Nova até a Escola Municipal Monteiro Lobato', 'matutino', 1, '2026-01-13 07:00:00'),
-(2, 'Rota Tarde - Retorno Centro',            'Rota escolar vespertina de retorno da escola para os bairros', 'vespertino', 1, '2026-01-13 07:10:00');
+(1, 'Rota Manhã - Jardim América/Vila Nova', 'Rota escolar matutina atendendo Jardim América e Vila Nova até a Escola Municipal Monteiro Lobato', 'morning', 1, '2026-01-13 07:00:00'),
+(2, 'Rota Tarde - Retorno Centro',            'Rota escolar vespertina de retorno da escola para os bairros', 'afternoon', 1, '2026-01-13 07:10:00');
 
 -- ------------------------------------------------------------
 -- 12) route_stops (paradas de cada rota, em ordem de sequência)
@@ -119,23 +119,23 @@ INSERT INTO route_passengers (id, route_id, passenger_id, active, created_at) VA
 (6, 2, 3, 1, '2026-01-14 08:05:00');
 
 -- ------------------------------------------------------------
--- 14) trips (viagens realizadas) — status ENUM assumido: 'agendada','em_andamento','finalizada','cancelada'
+-- 14) trips (viagens realizadas) — status ENUM assumido: 'scheduled','in_progress','completed','cancelled'
 -- ------------------------------------------------------------
 INSERT INTO trips (id, route_id, vehicle_id, driver_id, supervisor_id, trip_date, started_at, finished_at, status, created_at) VALUES
-(1, 1, 1, 1, 1, '2026-09-01', '2026-09-01 06:45:00', '2026-09-01 07:30:00', 'finalizada',   '2026-09-01 06:00:00'),
-(2, 2, 1, 1, 1, '2026-09-01', '2026-09-01 17:00:00', '2026-09-01 17:40:00', 'finalizada',   '2026-09-01 16:30:00'),
-(3, 1, 1, 1, 1, '2026-09-02', '2026-09-02 06:47:00', NULL,                  'em_andamento', '2026-09-02 06:00:00');
+(1, 1, 1, 1, 1, '2026-09-01', '2026-09-01 06:45:00', '2026-09-01 07:30:00', 'completed',   '2026-09-01 06:00:00'),
+(2, 2, 1, 1, 1, '2026-09-01', '2026-09-01 17:00:00', '2026-09-01 17:40:00', 'completed',   '2026-09-01 16:30:00'),
+(3, 1, 1, 1, 1, '2026-09-02', '2026-09-02 06:47:00', NULL,                  'in_progress', '2026-09-02 06:00:00');
 
 -- ------------------------------------------------------------
 -- 15) access_eve... (eventos de embarque/desembarque)
--- action ENUM assumido: 'embarque','desembarque'
+-- action ENUM assumido: 'entry','exit'
 -- ------------------------------------------------------------
 INSERT INTO access_events (id, passenger_id, vehicle_id, action, created_at) VALUES
-(1, 1, 1, 'embarque',    '2026-09-01 06:48:00'),
-(2, 2, 1, 'embarque',    '2026-09-01 06:52:00'),
-(3, 3, 1, 'embarque',    '2026-09-01 06:53:00'),
-(4, 1, 1, 'desembarque', '2026-09-01 07:25:00'),
-(5, 2, 1, 'desembarque', '2026-09-01 07:26:00'),
-(6, 3, 1, 'desembarque', '2026-09-01 07:27:00'),
-(7, 1, 1, 'embarque',    '2026-09-02 06:50:00'),
-(8, 2, 1, 'embarque',    '2026-09-02 06:54:00');
+(1, 1, 1, 'entry',    '2026-09-01 06:48:00'),
+(2, 2, 1, 'entry',    '2026-09-01 06:52:00'),
+(3, 3, 1, 'entry',    '2026-09-01 06:53:00'),
+(4, 1, 1, 'exit', '2026-09-01 07:25:00'),
+(5, 2, 1, 'exit', '2026-09-01 07:26:00'),
+(6, 3, 1, 'exit', '2026-09-01 07:27:00'),
+(7, 1, 1, 'entry',    '2026-09-02 06:50:00'),
+(8, 2, 1, 'entry',    '2026-09-02 06:54:00');

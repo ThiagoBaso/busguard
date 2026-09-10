@@ -1,19 +1,12 @@
 from fastapi import APIRouter, Depends
 from app.database import get_connection
-from typing import Literal
-from pydantic import BaseModel
+from app.schemas.access_events import AccessEventCreate
 from app.security import require_role
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
-class VehicleAccess(BaseModel):
-    passenger_id: int
-    vehicle_id: int
-    action: Literal["entry", "exit"]
-
-
 @router.post("/access")
-def vehicle_access(data: VehicleAccess, current_user=Depends(require_role("admin"))):
+def vehicle_access(data: AccessEventCreate, current_user=Depends(require_role("admin"))):
 
     connection = get_connection()
     try:
