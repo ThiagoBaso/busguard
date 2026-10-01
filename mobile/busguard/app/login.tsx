@@ -4,13 +4,39 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 
 import { Text, View } from '@/components/Themed';
+import { login } from '@/services/apiClient';
 import type { AppProfile } from '@/services/tripService';
 
 export default function LoginScreen() {
   const [profile, setProfile] = useState<AppProfile>('driver');
+  const [email, setEmail] = useState('joao.pereira@transportescolar.com');
+  const [password, setPassword] = useState('Busguard@123');
+  const [error, setError] = useState<string | null>(null);
 
-  function handleLogin() {
-    router.replace(profile === 'driver' ? '/(tabs)' : '/(tabs)/two');
+  function selectProfile(nextProfile: AppProfile) {
+    setProfile(nextProfile);
+    setEmail(
+      nextProfile === 'driver'
+        ? 'joao.pereira@transportescolar.com'
+        : 'maria.fernandes@email.com',
+    );
+  }
+
+  async function handleLogin() {
+    setError(null);
+
+    try {
+      const user = await login(email, password);
+
+      if (user.role === 'responsible') {
+        router.replace('/(tabs)/two');
+        return;
+      }
+
+      router.replace('/(tabs)');
+    } catch {
+      setError('Nao foi possivel entrar. Verifique e-mail e senha.');
+    }
   }
 
   return (
@@ -30,20 +56,36 @@ export default function LoginScreen() {
         <View style={styles.roleGroup}>
           <Pressable
             style={[styles.roleButton, profile === 'driver' && styles.roleButtonActive]}
-            onPress={() => setProfile('driver')}>
+            onPress={() => selectProfile('driver')}>
             <Text style={[styles.roleText, profile === 'driver' && styles.roleTextActive]}>Motorista</Text>
             <Text style={styles.roleHint}>Supervisor</Text>
           </Pressable>
           <Pressable
             style={[styles.roleButton, profile === 'responsible' && styles.roleButtonActive]}
-            onPress={() => setProfile('responsible')}>
+            onPress={() => selectProfile('responsible')}>
             <Text style={[styles.roleText, profile === 'responsible' && styles.roleTextActive]}>Responsavel</Text>
             <Text style={styles.roleHint}>Crianca</Text>
           </Pressable>
         </View>
 
-        <TextInput style={styles.input} placeholder="E-mail" placeholderTextColor="#94a3b8" autoCapitalize="none" />
-        <TextInput style={styles.input} placeholder="Senha" placeholderTextColor="#94a3b8" secureTextEntry />
+        <TextInput
+          style={styles.input}
+          placeholder="E-mail"
+          placeholderTextColor="#94a3b8"
+          autoCapitalize="none"
+          value={email}
+          onChangeText={setEmail}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Senha"
+          placeholderTextColor="#94a3b8"
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Pressable style={styles.loginButton} onPress={handleLogin}>
           <Text style={styles.loginButtonText}>Entrar</Text>
@@ -142,6 +184,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#f8bd16',
     marginTop: 6,
+  },
+  error: {
+    color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
   },
   loginButtonText: {
     color: '#1f2937',

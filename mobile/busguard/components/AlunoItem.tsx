@@ -7,11 +7,16 @@ import type { BoardingStudent } from '@/services/tripService';
 
 type AlunoItemProps = {
   aluno: BoardingStudent;
+  onBoardingChange?: (aluno: BoardingStudent, checkedIn: boolean) => void;
 };
 
-export default function AlunoItem({ aluno }: AlunoItemProps) {
+export default function AlunoItem({ aluno, onBoardingChange }: AlunoItemProps) {
   const [embarcado, setEmbarcado] = useState(aluno.checkedIn);
   const isAbsent = aluno.status === 'absent';
+  const toggleBoarding = (checkedIn: boolean) => {
+    setEmbarcado(checkedIn);
+    onBoardingChange?.(aluno, checkedIn);
+  };
 
   return (
     <View style={styles.container}>
@@ -26,11 +31,11 @@ export default function AlunoItem({ aluno }: AlunoItemProps) {
       </View>
       <Pressable
         style={[styles.status, embarcado && styles.statusChecked, isAbsent && styles.statusAbsent]}
-        onPress={() => !isAbsent && setEmbarcado((current) => !current)}>
+        onPress={() => !isAbsent && toggleBoarding(!embarcado)}>
         <Checkbox
           value={embarcado}
           disabled={isAbsent}
-          onValueChange={setEmbarcado}
+          onValueChange={toggleBoarding}
           color={embarcado ? '#10b981' : undefined}
         />
         <Text style={[styles.statusText, embarcado && styles.statusTextChecked]}>

@@ -4,7 +4,7 @@ import { SymbolView } from 'expo-symbols';
 
 import AlunoItem from '@/components/AlunoItem';
 import { Text, View } from '@/components/Themed';
-import { DriverTrip, getDriverTrip } from '@/services/tripService';
+import { BoardingStudent, DriverTrip, getDriverTrip, updateBoardingStatus } from '@/services/tripService';
 
 export default function DriverHomeScreen() {
   const [trip, setTrip] = useState<DriverTrip | null>(null);
@@ -12,6 +12,14 @@ export default function DriverHomeScreen() {
   useEffect(() => {
     getDriverTrip().then(setTrip);
   }, []);
+
+  function handleBoardingChange(student: BoardingStudent, checkedIn: boolean) {
+    if (!trip?.id) {
+      return;
+    }
+
+    updateBoardingStatus(trip.id, student.id, checkedIn).catch(() => undefined);
+  }
 
   if (!trip) {
     return (
@@ -74,7 +82,7 @@ export default function DriverHomeScreen() {
       <FlatList
         scrollEnabled={false}
         data={trip.students}
-        renderItem={({ item }) => <AlunoItem aluno={item} />}
+        renderItem={({ item }) => <AlunoItem aluno={item} onBoardingChange={handleBoardingChange} />}
         keyExtractor={(item) => item.id}
       />
 

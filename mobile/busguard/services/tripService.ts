@@ -1,3 +1,5 @@
+import { apiFetch } from '@/services/apiClient';
+
 export type AppProfile = 'driver' | 'responsible';
 
 export type BoardingStudent = {
@@ -13,6 +15,7 @@ export type BoardingStudent = {
 };
 
 export type DriverTrip = {
+  id?: number;
   routeName: string;
   schoolName: string;
   vehicleLabel: string;
@@ -24,6 +27,7 @@ export type DriverTrip = {
 };
 
 export type ResponsibleTrip = {
+  id?: number;
   routeName: string;
   schoolName: string;
   status: string;
@@ -116,9 +120,31 @@ const responsibleTrip: ResponsibleTrip = {
 };
 
 export async function getDriverTrip(): Promise<DriverTrip> {
-  return driverTrip;
+  try {
+    return await apiFetch<DriverTrip>('/driver/trips/current');
+  } catch {
+    return driverTrip;
+  }
 }
 
 export async function getResponsibleTrip(): Promise<ResponsibleTrip> {
-  return responsibleTrip;
+  try {
+    return await apiFetch<ResponsibleTrip>('/responsible/children/current-trip');
+  } catch {
+    return responsibleTrip;
+  }
+}
+
+export async function updateBoardingStatus(
+  tripId: number,
+  passengerId: string,
+  checkedIn: boolean,
+) {
+  return apiFetch(`/driver/trips/${tripId}/boarding`, {
+    method: 'POST',
+    body: JSON.stringify({
+      passenger_id: Number(passengerId),
+      checked_in: checkedIn,
+    }),
+  });
 }
