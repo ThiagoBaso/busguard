@@ -1,65 +1,55 @@
-from fastapi import APIRouter, Depends
-from app.database import get_connection
-from app.schemas.access_events import AccessEventCreate
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.schemas.access_events import AccessEventCreate, AccessEventRead
 from app.security import require_role
+from app.services.vehicle_service import (
+    PassengerNotFoundError,
+    VehicleNotFoundError,
+    create_access_event,
+    get_current_passenger_ids,
+)
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
-@router.post("/access")
-def vehicle_access(data: AccessEventCreate, current_user=Depends(require_role("admin"))):
 
-    connection = get_connection()
+@router.post("/access", response_model=AccessEventRead, status_code=status.HTTP_201_CREATED)
+def vehicle_access(
+    data: AccessEventCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
     try:
-        with connection.cursor() as cursor:
-            sql = "INSERT INTO access_events (passenger_id, vehicle_id, action) VALUES (%s, %s, %s)"
-            cursor.execute(sql, (data.passenger_id, data.vehicle_id, data.action))
-        connection.commit()
+        return create_access_event(db, data)
 
-        return {
-            "message": "passager " + data.action,
-            "passager_id": data.passenger_id,
-            "vehicle_id": data.vehicle_id,
-            "status": "ok" 
-        }
+    except PassengerNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Passenger not found",
+        )
 
-    finally:
-        connection.close()
+    except VehicleNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vehicle not found",
+        )
+
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle access service unavailable",
+        )
+
 
 @router.get("/{vehicle_id}/passengers")
-def get_passengers(vehicle_id: int, current_user=Depends(require_role("admin"))):
-
-    connection = get_connection()
-
-    try:
-        with connection.cursor() as cursor:
-
-            sql = """
-                SELECT passenger_id
-                FROM (
-                    SELECT
-                        passenger_id,
-                        action,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY passenger_id
-                            ORDER BY created_at DESC
-                        ) AS rn
-                    FROM access_events
-                    WHERE vehicle_id = %s
-                ) AS latest
-                WHERE rn = 1
-                AND action = 'entry'
-            """
-
-            cursor.execute(sql, (vehicle_id,))
-            passengers = cursor.fetchall()
-
-            return {
-                "vehicle_id": vehicle_id,
-                "passengers": [
-                    passenger["passenger_id"]
-                    for passenger in passengers
-                ]
-            }
-
-    finally:
-        connection.close()
+def get_passengers(
+    vehicle_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    return {
+        "vehicle_id": vehicle_id,
+        "passengers": get_current_passenger_ids(db, vehicle_id),
+    }

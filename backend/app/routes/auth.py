@@ -1,17 +1,19 @@
 import logging
 
-import pymysql
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from app.database import get_connection
-from app.security import verify_password, create_access_token
+from app.database import get_db
+from app.security import create_access_token, get_current_user
+from app.services.auth_service import authenticate_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth",
-    tags=["Authentication"]
+    tags=["Authentication"],
 )
 
 
@@ -20,85 +22,62 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class CurrentUserResponse(BaseModel):
+    id: int
+    role: str
+
+
 def invalid_credentials_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
         headers={
-            "WWW-Authenticate": "Bearer"
-        }
+            "WWW-Authenticate": "Bearer",
+        },
     )
 
 
-@router.post("/login")
-def login(data: LoginRequest):
-
-    connection = None
-
+@router.post("/login", response_model=TokenResponse)
+def login(data: LoginRequest, db: Session = Depends(get_db)):
     try:
-        connection = get_connection()
+        user = authenticate_user(db, data.email, data.password)
 
-        with connection.cursor() as cursor:
+        if not user:
+            raise invalid_credentials_exception()
 
-            sql = """
-                SELECT id, password_hash, role
-                FROM users
-                WHERE email = %s
-            """
+        token = create_access_token(
+            user_id=user.id,
+            role=user.role,
+        )
 
-            cursor.execute(sql, (data.email,))
-            user = cursor.fetchone()
-
-            if not user:
-                raise invalid_credentials_exception()
-
-            if not verify_password(
-                data.password,
-                user["password_hash"]
-            ):
-                raise invalid_credentials_exception()
-
-            token = create_access_token(
-                user_id=user["id"],
-                role=user["role"]
-            )
-
-            return {
-                "access_token": token,
-                "token_type": "bearer"
-            }
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+        }
 
     except HTTPException:
         raise
 
-    except pymysql.MySQLError:
+    except SQLAlchemyError:
         logger.exception("Database error during login")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable"
+            detail="Authentication service unavailable",
         )
 
     except RuntimeError:
         logger.exception("Authentication configuration error during login")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication service is not configured"
+            detail="Authentication service is not configured",
         )
 
-    except Exception:
-        logger.exception("Unexpected authentication error during login")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected authentication error"
-        )
 
-    finally:
-        if connection:
-            connection.close()
-
-@router.get("/me")
-def me():
-    return {
-        "message": "Authenticated user information",
-        "status": "ok"
-    }
+@router.get("/me", response_model=CurrentUserResponse)
+def me(current_user=Depends(get_current_user)):
+    return current_user

@@ -35,7 +35,11 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+    try:
+        return pwd_context.verify(password, password_hash)
+    except ValueError:
+        logger.warning("Malformed password hash found during authentication")
+        return False
 
 
 def create_access_token(user_id: int, role: str):

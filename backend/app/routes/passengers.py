@@ -1,37 +1,35 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-import pymysql
-from app.database import get_connection
-from app.schemas.passengers import PassengerCreate
+from app.database import get_db
+from app.schemas.passengers import PassengerCreate, PassengerRead
 from app.security import require_role
+from app.services.passenger_service import (
+    AddressNotFoundError,
+    PassengerAlreadyExistsError,
+    create_passenger as create_passenger_service,
+)
 
 router = APIRouter(prefix="/passengers", tags=["passengers"])
 
-@router.post("/")
-def create_passenger(passenger: PassengerCreate, current_user=Depends(require_role("admin"))):
-    connection = get_connection()
+
+@router.post("/", response_model=PassengerRead, status_code=status.HTTP_201_CREATED)
+def create_passenger(
+    passenger: PassengerCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
     try:
-        with connection.cursor() as cursor:
-            sql = """
-                INSERT INTO passengers (name, birth_date, rg, cpf, facial)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            cursor.execute(sql, (passenger.name, passenger.birth_date, passenger.rg, passenger.cpf, passenger.facial))
-        connection.commit()
+        return create_passenger_service(db, passenger)
 
-        return {
-            "message": "Passenger created successfully",
-            "passenger_id": cursor.lastrowid,
-            "status": "ok"
-        }
-
-    except pymysql.MySQLError as e:
-        connection.rollback()
-
+    except AddressNotFoundError:
         raise HTTPException(
-            status_code=500,
-            detail=str(e)
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Address not found",
         )
 
-    finally:
-        connection.close()
+    except PassengerAlreadyExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Passenger with this RG or CPF already exists",
+        )
