@@ -64,6 +64,23 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="config"
+        options={{
+          title: 'Config',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{
+                android: 'settings',
+                web: 'settings',
+              }}
+              tintColor={color}
+              size={24}
+              fallback={<Text style={{ color }}>Cfg</Text>}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
