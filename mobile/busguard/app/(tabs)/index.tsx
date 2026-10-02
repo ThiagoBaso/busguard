@@ -114,7 +114,7 @@ export default function DriverHomeScreen() {
       />
 
       <View style={styles.nextStop}>
-        <View>
+        <View style={{backgroundColor: 'transparent'}}>
           <Text style={styles.nextLabel}>Proxima parada</Text>
           <Text style={styles.nextName}>{trip.nextStop.name}</Text>
           <Text style={styles.nextAddress}>{trip.nextStop.address}</Text>

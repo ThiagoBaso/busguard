@@ -49,7 +49,7 @@ export default function ConfigScreen() {
             tintColor="#ffffff"
             fallback={<Text style={styles.buttonFallback}>Sair</Text>}
           />
-          <Text style={styles.logoutButtonText}>{loading ? 'Saindo...' : 'Desligar e voltar ao login'}</Text>
+          <Text style={styles.logoutButtonText}>{loading ? 'Saindo...' : 'Sair'}</Text>
         </Pressable>
       </View>
     </View>
