@@ -1,12 +1,23 @@
 import { SymbolView } from 'expo-symbols';
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
+import { useEffect, useState } from 'react';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { CurrentUser, restoreSession } from '@/services/apiClient';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const [role, setRole] = useState<CurrentUser['role'] | null>(null);
+
+  useEffect(() => {
+    restoreSession().then((user) => {
+      setRole(user?.role ?? null);
+    });
+  }, []);
+
+  const showResponsibleTab = role === 'responsible';
 
   return (
     <Tabs
@@ -20,6 +31,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          href: showResponsibleTab ? null : undefined,
           title: 'Inicio',
           tabBarIcon: ({ color }) => (
             <SymbolView
@@ -37,6 +49,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="two"
         options={{
+          href: showResponsibleTab ? undefined : null,
           title: 'Responsavel',
           tabBarIcon: ({ color }) => (
             <SymbolView

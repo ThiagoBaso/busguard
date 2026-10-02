@@ -10,7 +10,23 @@ export default function DriverHomeScreen() {
   const [trip, setTrip] = useState<DriverTrip | null>(null);
 
   useEffect(() => {
-    getDriverTrip().then(setTrip);
+    let mounted = true;
+
+    function loadTrip() {
+      getDriverTrip().then((nextTrip) => {
+        if (mounted) {
+          setTrip(nextTrip);
+        }
+      });
+    }
+
+    loadTrip();
+    const intervalId = setInterval(loadTrip, 15000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
   function handleBoardingChange(student: BoardingStudent, checkedIn: boolean) {
@@ -18,7 +34,18 @@ export default function DriverHomeScreen() {
       return;
     }
 
-    updateBoardingStatus(trip.id, student.id, checkedIn).catch(() => undefined);
+    setTrip({
+      ...trip,
+      students: trip.students.map((currentStudent) =>
+        currentStudent.id === student.id
+          ? { ...currentStudent, checkedIn, status: checkedIn ? 'present' : 'waiting' }
+          : currentStudent,
+      ),
+    });
+
+    updateBoardingStatus(trip.id, student.id, checkedIn).catch(() => {
+      setTrip(trip);
+    });
   }
 
   if (!trip) {

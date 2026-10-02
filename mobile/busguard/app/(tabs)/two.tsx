@@ -9,7 +9,23 @@ export default function ResponsibleHomeScreen() {
   const [trip, setTrip] = useState<ResponsibleTrip | null>(null);
 
   useEffect(() => {
-    getResponsibleTrip().then(setTrip);
+    let mounted = true;
+
+    function loadTrip() {
+      getResponsibleTrip().then((nextTrip) => {
+        if (mounted) {
+          setTrip(nextTrip);
+        }
+      });
+    }
+
+    loadTrip();
+    const intervalId = setInterval(loadTrip, 15000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
   if (!trip) {
@@ -60,8 +76,8 @@ export default function ResponsibleHomeScreen() {
             fallback={<Text style={styles.busFallback}>Bus</Text>}
           />
         </View>
-        <Text style={styles.childTag}>Lucas a bordo</Text>
-        <Text style={styles.schoolTag}>Escola Vila Verde</Text>
+        <Text style={styles.childTag}>{trip.childStatus}</Text>
+        <Text style={styles.schoolTag}>{trip.schoolName}</Text>
         <Text style={styles.homeTag}>Casa (07:18)</Text>
       </View>
 
@@ -113,9 +129,9 @@ export default function ResponsibleHomeScreen() {
         </View>
         <View style={styles.childInfo}>
           <Text style={styles.childName}>{trip.childName}</Text>
-          <Text style={styles.childStatus}>Embarque as 07:18 - Assento 04</Text>
+          <Text style={styles.childStatus}>Atualizado as {trip.lastUpdate}</Text>
         </View>
-        <Text style={styles.presentPill}>Presente</Text>
+        <Text style={styles.presentPill}>{trip.childStatus}</Text>
       </View>
     </ScrollView>
   );

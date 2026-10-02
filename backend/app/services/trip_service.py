@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.models.access_events import AccessEvent
@@ -22,6 +22,10 @@ class CurrentTripNotFoundError(Exception):
 
 
 class PassengerNotInTripError(Exception):
+    pass
+
+
+class TripNotInProgressError(Exception):
     pass
 
 
@@ -103,7 +107,7 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
 
     trip, route, vehicle, _driver, driver_user = row
     passenger = db.get(Passenger, passenger_link.passengers_id)
-    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id)
+    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id, trip.started_at)
     child_status = "A bordo" if latest_event and latest_event.action == "entry" else "Aguardando embarque"
     last_update = latest_event.created_at.strftime("%H:%M") if latest_event else "--:--"
 
@@ -128,6 +132,9 @@ def set_boarding_status(db: Session, trip_id: int, passenger_id: int, checked_in
     if not trip:
         raise CurrentTripNotFoundError
 
+    if trip.status != "in_progress":
+        raise TripNotInProgressError
+
     route_passenger = (
         db.query(RoutePassenger)
         .filter(
@@ -141,10 +148,21 @@ def set_boarding_status(db: Session, trip_id: int, passenger_id: int, checked_in
     if not route_passenger:
         raise PassengerNotInTripError
 
+    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_id, trip.started_at)
+    next_action = "entry" if checked_in else "exit"
+
+    if latest_event and latest_event.action == next_action:
+        return {
+            "passenger_id": passenger_id,
+            "checked_in": checked_in,
+            "event_id": latest_event.id,
+            "duplicated": True,
+        }
+
     event = AccessEvent(
         passenger_id=passenger_id,
         vehicle_id=trip.vehicle_id,
-        action="entry" if checked_in else "exit",
+        action=next_action,
     )
     db.add(event)
     db.commit()
@@ -154,6 +172,7 @@ def set_boarding_status(db: Session, trip_id: int, passenger_id: int, checked_in
         "passenger_id": passenger_id,
         "checked_in": checked_in,
         "event_id": event.id,
+        "duplicated": False,
     }
 
 
@@ -170,7 +189,7 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
     students = []
 
     for index, (passenger, address) in enumerate(passengers, start=1):
-        latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id)
+        latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at)
         checked_in = bool(latest_event and latest_event.action == "entry")
         students.append(
             BoardingStudent(
@@ -189,16 +208,21 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
     return students
 
 
-def _latest_event_for_passenger(db: Session, vehicle_id: int, passenger_id: int) -> AccessEvent | None:
-    return (
-        db.query(AccessEvent)
-        .filter(
-            AccessEvent.vehicle_id == vehicle_id,
-            AccessEvent.passenger_id == passenger_id,
-        )
-        .order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc())
-        .first()
+def _latest_event_for_passenger(
+    db: Session,
+    vehicle_id: int,
+    passenger_id: int,
+    started_at=None,
+) -> AccessEvent | None:
+    query = db.query(AccessEvent).filter(
+        AccessEvent.vehicle_id == vehicle_id,
+        AccessEvent.passenger_id == passenger_id,
     )
+
+    if started_at:
+        query = query.filter(AccessEvent.created_at >= started_at)
+
+    return query.order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc()).first()
 
 
 def _next_stop_address(db: Session, route_id: int) -> str:

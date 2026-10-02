@@ -7,6 +7,7 @@ from app.security import get_current_user
 from app.services.trip_service import (
     CurrentTripNotFoundError,
     PassengerNotInTripError,
+    TripNotInProgressError,
     get_driver_current_trip,
     set_boarding_status,
 )
@@ -64,4 +65,10 @@ def update_boarding(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Passenger is not assigned to this trip",
+        )
+
+    except TripNotInProgressError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Trip is not in progress",
         )
