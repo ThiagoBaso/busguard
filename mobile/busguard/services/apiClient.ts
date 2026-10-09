@@ -3,10 +3,23 @@ import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 
 const API_PORT = '8000';
+const REQUEST_TIMEOUT_MS = 10000;
 const API_BASE_URL = getApiBaseUrl();
 const TOKEN_STORAGE_KEY = 'busguard.accessToken';
 
 let accessToken: string | null = null;
+const sessionExpiredListeners = new Set<() => void>();
+
+export class ApiError extends Error {
+  constructor(public readonly status: number) {
+    super(`API error ${status}`);
+  }
+}
+
+export function onSessionExpired(listener: () => void) {
+  sessionExpiredListeners.add(listener);
+  return () => { sessionExpiredListeners.delete(listener); };
+}
 
 type LoginResponse = {
   access_token: string;
@@ -18,24 +31,12 @@ export type CurrentUser = {
   role: 'admin' | 'driver' | 'responsible' | 'supervisor';
 };
 
-export function getAccessToken() {
-  return accessToken;
-}
-
-export async function setAccessToken(token: string | null) {
+async function setAccessToken(token: string | null) {
   accessToken = token;
 
   if (Platform.OS === 'web') {
-    if (typeof globalThis.localStorage === 'undefined') {
-      return;
-    }
-
-    if (token) {
-      globalThis.localStorage.setItem(TOKEN_STORAGE_KEY, token);
-      return;
-    }
-
-    globalThis.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    // Descarta tokens persistidos por versões anteriores. A sessão web fica só em memória.
+    clearLegacyWebToken();
     return;
   }
 
@@ -48,7 +49,7 @@ export async function setAccessToken(token: string | null) {
 }
 
 export async function login(email: string, password: string): Promise<CurrentUser> {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await fetchWithTimeout(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -57,13 +58,18 @@ export async function login(email: string, password: string): Promise<CurrentUse
   });
 
   if (!response.ok) {
-    throw new Error('Login invalido');
+    throw new ApiError(response.status);
   }
 
   const data = (await response.json()) as LoginResponse;
   await setAccessToken(data.access_token);
 
-  return getCurrentUser();
+  try {
+    return await getCurrentUser();
+  } catch (error) {
+    await setAccessToken(null);
+    throw error;
+  }
 }
 
 export async function restoreSession(): Promise<CurrentUser | null> {
@@ -77,9 +83,11 @@ export async function restoreSession(): Promise<CurrentUser | null> {
 
   try {
     return await getCurrentUser();
-  } catch {
-    await setAccessToken(null);
-    return null;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -92,20 +100,42 @@ export async function getCurrentUser(): Promise<CurrentUser> {
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const requestToken = accessToken;
+  const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    throw new Error(`API error ${response.status}`);
+    if (response.status === 401 && requestToken && accessToken === requestToken) {
+      await setAccessToken(null);
+      sessionExpiredListeners.forEach((listener) => listener());
+    }
+    throw new ApiError(response.status);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return response.json() as Promise<T>;
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit) {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', onAbort);
+  if (options.signal?.aborted) controller.abort();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 function getApiBaseUrl() {
@@ -146,12 +176,17 @@ function stripTrailingSlash(value: string) {
 
 async function getStoredAccessToken() {
   if (Platform.OS === 'web') {
-    if (typeof globalThis.localStorage === 'undefined') {
-      return null;
-    }
-
-    return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY);
+    clearLegacyWebToken();
+    return null;
   }
 
   return SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+}
+
+function clearLegacyWebToken() {
+  try {
+    globalThis.localStorage?.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // O navegador pode bloquear o acesso ao armazenamento.
+  }
 }

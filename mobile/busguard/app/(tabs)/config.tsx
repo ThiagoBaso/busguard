@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 
 import { Text, View } from '@/components/Themed';
-import { logout } from '@/services/apiClient';
+import { useSession } from '@/services/session';
 
 export default function ConfigScreen() {
+  const { logout } = useSession();
   const [loading, setLoading] = useState(false);
 
   async function handleLogout() {
@@ -14,7 +14,6 @@ export default function ConfigScreen() {
 
     try {
       await logout();
-      router.replace('/login');
     } finally {
       setLoading(false);
     }

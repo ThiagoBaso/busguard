@@ -2,7 +2,7 @@
 
 **Data da análise:** 6 de outubro de 2026.
 
-**Estado observado:** aplicação de demonstração/MVP, com API e aplicativo integrados, dados simulados e pendências relevantes antes de uso em produção.
+**Estado observado:** aplicação MVP, com API e aplicativo integrados e pendências relevantes antes de uso em produção. Os dados simulados não são mais carregados automaticamente nem exibidos como fallback no mobile.
 
 BusGuard organiza transporte escolar: usuários, passageiros, responsáveis, motoristas, veículos, rotas, viagens e eventos de embarque/desembarque. A base já separa transporte HTTP, serviços, contratos e persistência. As prioridades são corrigir autorização por viagem, tornar falhas e dados demonstrativos explícitos e consolidar a evolução do banco.
 
@@ -18,16 +18,16 @@ A análise não examinou valores do `.env`, código de dependências instaladas 
 
 | Área | Implementação atual | Limite observado |
 | --- | --- | --- |
-| Autenticação | Login por e-mail/senha, JWT, consulta de perfil e restauração de sessão. | Sem refresh token ou revogação no servidor; `/auth/me` usa os claims do token. |
+| Autenticação | Login por e-mail/senha, JWT, consulta de perfil e restauração de sessão. | Sem refresh token ou revogação no servidor; cada requisição confere usuário e perfil atuais no banco. |
 | Administração | API de criação, listagem, atualização e exclusão de cadastros e vínculos. | Não há painel administrativo dedicado no aplicativo. |
 | Viagens | Cadastros e ações administrativas para iniciar, concluir e cancelar. | Atualização genérica permite alterar status e horários fora dessas ações. |
-| Motorista | Tela com passageiros, contagem e marcação manual de embarque. | Consulta pode retornar viagem alheia; marcação não verifica atribuição do usuário. |
+| Motorista | Tela com passageiros, contagem e marcação manual de embarque. | Leitura e marcação exigem vínculo do motorista ou supervisor à viagem; a deduplicação de eventos ainda não é atômica. |
 | Responsável | Consulta da viagem e estado de embarque de passageiro vinculado. | Seleciona apenas o primeiro vínculo de filho encontrado. |
 | Atualização | Telas consultam a API a cada 15 segundos. | Não há canal de atualização em tempo real nem rastreamento GPS. |
 | Eventos | Persistência de `entry`/`exit` por passageiro e veículo. | Não registra viagem, autor ou origem; deduplicação não é atômica. |
-| Demonstração | Seeds SQL/Python, credenciais locais e mocks mobile. | Falhas de API ativam mocks automaticamente, sem indicação de dados fictícios. |
+| Demonstração | Arquivos de seed permanecem no repositório para desenvolvimento isolado. | O Compose não os carrega automaticamente; o endpoint de seed e o fallback mobile foram removidos. Volumes antigos podem conter dados de demonstração. |
 
-Os mapas da tela do responsável são desenhos estáticos. Escola, velocidade média, ETA e alguns textos/contadores são fixos. Busca de aluno, validação de chamada, ligação e mensagem aparecem na interface sem uma implementação funcional completa. O campo `facial` e os textos de leitor não constituem uma integração de reconhecimento facial. Não foram encontrados envio de notificações, coleta de localização ou processamento biométrico.
+As telas mobile agora exibem somente informações retornadas pela API e estados explícitos de erro ou ausência de viagem. Não há integração de mapa, rastreamento GPS, ETA, notificações, ligação, mensagens ou reconhecimento facial. O campo `facial` no cadastro não constitui uma integração biométrica.
 
 ## 3. Arquitetura atual
 
@@ -42,7 +42,7 @@ flowchart LR
     ROUTES --> SERVICES[Serviços de negócio]
     SERVICES --> ORM[SQLAlchemy / PyMySQL]
     ORM --> DB[(MySQL 8.0)]
-    SQL[init.sql e megamock.sql] -->|Primeiro volume local| DB
+    SQL[init.sql] -->|Primeiro volume local| DB
 ```
 
 Fluxo de leitura: rota → dependências de autenticação/banco → serviço → consulta → schema de resposta. Fluxo de alteração: schema de entrada → serviço → persistência/commit → resposta. Há traduções de conflitos e recursos ausentes nas rotas, mas o tratamento de falhas de infraestrutura não é uniforme em todos os módulos.
@@ -142,13 +142,12 @@ Com a API iniciada, a documentação automática fica em [Swagger UI local](http
 | --- | --- | --- |
 | `GET /health` | Público. | Retorna `{"status":"ok"}`; não consulta o banco. |
 | `POST /auth/login` | Público. | JSON com `email` e `password`; retorna `access_token` e `token_type`. |
-| `GET /auth/me` | Bearer JWT válido. | Retorna `id` e `role` extraídos do token. |
-| `GET /driver/trips/current` | `driver`, `supervisor`, `admin`. | DTO mobile da viagem ativa. |
-| `POST /driver/trips/{trip_id}/boarding` | `driver`, `supervisor`, `admin`. | JSON com `passenger_id` e `checked_in`. |
+| `GET /auth/me` | Bearer JWT válido e conta existente com mesmo perfil. | Retorna `id` e `role` atuais do banco. |
+| `GET /driver/trips/current` | `driver` ou `supervisor` vinculado. | DTO mobile da viagem ativa autorizada. |
+| `POST /driver/trips/{trip_id}/boarding` | `driver` ou `supervisor` vinculado à viagem. | JSON com `passenger_id` e `checked_in`. |
 | `GET /responsible/children/current-trip` | `responsible`, `admin`. | Viagem de um passageiro vinculado ao usuário. |
 | CRUD `/admin/...` | `admin`. | Cadastros e vínculos listados abaixo. |
 | `POST /admin/trips/{trip_id}/start`, `/finish`, `/cancel` | `admin`. | Ações de viagem. |
-| `POST /admin/seed-demo` | `admin`. | Altera dados/credenciais de demonstração. |
 | `POST /passengers/` | `admin`. | Cadastro de passageiro com verificação prévia do endereço. |
 | `POST /vehicles/access` | `admin`. | Evento de entrada/saída. |
 | `GET /vehicles/{vehicle_id}/passengers` | `admin`. | IDs atualmente a bordo segundo último evento por passageiro. |
@@ -163,9 +162,9 @@ Há uma diferença entre a declaração de segurança e o endpoint de login: `OA
 
 [security.py](backend/app/security.py) cria tokens com `sub`, `role` e `exp`; usa `HS256` e duração padrão de 30 minutos, configuráveis. A chave JWT é obrigatória para emitir/validar tokens, mas sua ausência é detectada durante o uso, e não no início da API.
 
-`get_current_user` valida o token e seus claims, sem consultar a existência do usuário ou seu perfil atual no banco. Exclusão de usuário, alteração de senha/perfil e logout não invalidam imediatamente um token já emitido. O logout mobile remove apenas a cópia local. Não há limitação explícita de tentativas de login nem mecanismo de refresh/revogação.
+`get_current_user` valida o token e confere no banco a existência do usuário e a igualdade do perfil atual com o claim. Exclusão de usuário e mudança de perfil invalidam o token; mudança de senha e logout ainda não o revogam no servidor. O logout mobile remove apenas a cópia local. Não há limitação explícita de tentativas de login nem mecanismo de refresh/revogação.
 
-O cliente guarda token em memória e em SecureStore nas plataformas nativas. Na web, persiste em `localStorage`, que pode ser acessado por JavaScript da origem. Para uma sessão web de produção, avaliar cookies `HttpOnly`, `Secure` e `SameSite`, acompanhados do desenho de CSRF/CORS, ou uma arquitetura de sessão que reduza exposição. [Orientação OWASP para armazenamento web](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html).
+O cliente guarda token em memória e em SecureStore nas plataformas nativas. Na web, a sessão fica só em memória e é perdida ao recarregar; tokens antigos em `localStorage` são removidos quando o app inicia. Isso reduz a persistência, mas não elimina o risco de XSS durante uma sessão ativa. Para uma sessão web persistente de produção, avaliar cookies `HttpOnly`, `Secure` e `SameSite`, acompanhados do desenho de CSRF/CORS. [Orientação OWASP para armazenamento web](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html).
 
 O tutorial atual do FastAPI usa PyJWT e `pwdlib`, com Argon2 recomendado para novos hashes. Uma modernização do projeto deve avaliar compatibilidade e migração gradual dos hashes bcrypt existentes, sem invalidar contas ou atualizar bibliotecas às cegas. [Referência FastAPI de JWT e senhas](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/).
 
@@ -201,7 +200,7 @@ Invoke-RestMethod http://localhost:8000/health
 
 Para diagnóstico, use `docker compose logs --tail 100 api mysql`, cuidando de não compartilhar dados pessoais ou segredos que eventualmente apareçam nos logs. Um `503` no login pode indicar MySQL ainda inicializando; `/health` sozinho não comprova prontidão do banco.
 
-O primeiro volume MySQL recebe `init.sql` e, depois, `megamock.sql`. Scripts em `/docker-entrypoint-initdb.d` não são reaplicados a um volume já existente. Não apague o volume para resolver uma migração sem confirmar que os dados podem ser descartados. O README descreve carga manual apenas para bases locais vazias; não use essa carga sobre dados existentes.
+O primeiro volume MySQL recebe apenas `init.sql`. Scripts em `/docker-entrypoint-initdb.d` não são reaplicados a um volume já existente. Volumes antigos podem continuar com dados de demonstração; não apague o volume sem confirmar que os dados podem ser descartados.
 
 ### Aplicativo web
 
@@ -220,7 +219,7 @@ A versão web usa `web.output: static` em `app.json`; uma exportação web não 
 
 ### Contas de demonstração
 
-Os acessos locais de motorista e responsável estão no [README.md](README.md). O mock também inclui contas de administrador e supervisor. Todas são dados de desenvolvimento, com senha compartilhada. A tela de login já preenche credenciais de demonstração. Esses cadastros e esse preenchimento precisam ficar restritos ao ambiente demonstrativo antes de uma publicação real.
+O Compose não cria contas de demonstração e a tela de login não preenche credenciais. O arquivo `database/megamock.sql` permanece apenas como fixture manual para ambiente isolado de desenvolvimento. Bancos já inicializados podem conservar contas antigas.
 
 ## 9. Configuração de ambiente
 
@@ -247,10 +246,10 @@ Prioridades propostas para orientar o trabalho: **P0** deve ser resolvido antes 
 
 | ID | Evidência | Impacto e ação recomendada |
 | --- | --- | --- |
-| P0-01 | [trip_service.py](backend/app/services/trip_service.py), `get_driver_current_trip`: sem viagem do usuário, consulta a primeira viagem ativa geral. | Exposição de passageiros/endereços de outra viagem. Remover o fallback e verificar motorista/supervisor pelo vínculo correto. |
-| P0-02 | [driver.py](backend/app/routes/driver.py), `update_boarding`, não passa identidade ao serviço; `set_boarding_status` não verifica atribuição do operador. | Usuário de perfil permitido pode alterar embarque de viagem alheia. Exigir autorização por viagem e ação antes da escrita; adicionar testes entre dois operadores. |
-| P0-03 | [tripService.ts](mobile/busguard/services/tripService.ts), `catch` de qualquer falha devolve viagem mock; backend e tela também têm indicadores fixos. | Sessão expirada, ausência de viagem ou API indisponível podem parecer acompanhamento real. Tornar demonstração explícita e apresentar erro/ausência/desatualização no fluxo operacional. |
-| P0-04 | [seed_service.py](backend/app/services/seed_service.py), endpoint `/admin/seed-demo`, SQL mock e login preenchido. | Seed altera contas conhecidas, redefine senhas e muda viagens; não há bloqueio por ambiente. Desabilitar essas capacidades em produção e separar bootstrap/fixtures de desenvolvimento. |
+| P0-01 | Corrigido em 8 de outubro de 2026: leitura de viagem filtra motorista ou supervisor vinculado. | Verificar em teste de integração com MySQL antes de uso real. |
+| P0-02 | Corrigido em 8 de outubro de 2026: embarque recebe identidade e exige vínculo com a viagem. | Verificar em teste de integração com MySQL antes de uso real. |
+| P0-03 | Corrigido em 8 de outubro de 2026: aplicativo removeu fallback mock; telas não mantêm viagem após erro. | Validar a experiência em Android, iOS e web com API indisponível e sessão expirada. |
+| P0-04 | Corrigido em 8 de outubro de 2026: Compose não carrega seed, endpoint de seed removido e login sem preenchimento. | Limpar apenas ambientes antigos cujo conteúdo tenha sido avaliado; proteger fixtures remanescentes de uso em produção. |
 
 Os dois primeiros itens são avaliação de risco a partir do código e se enquadram no problema de autorização por objeto descrito pela [OWASP API Security](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/).
 
@@ -261,13 +260,13 @@ Os dois primeiros itens são avaliação de risco a partir do código e se enqua
 | P1-01 | [init.sql](database/init.sql) usa PK composta `(id, users_id)` em `responsibles`; [modelo ORM](backend/app/models/responsibles.py) usa apenas `id`. Constraints compostas de unicidade de rotas/vínculos também não constam nos modelos. | Reconciliar SQL e ORM, definir baseline e introduzir migrações versionadas com verificação de drift. |
 | P1-02 | Eventos sem vínculo de viagem/autor e deduplicação por consulta seguida de insert. | Modelar proveniência e idempotência/concorrência; planejar migração dos históricos sem inventar associações. Definir índices segundo consultas reais. |
 | P1-03 | [TripUpdate](backend/app/schemas/trips.py) e CRUD genérico alteram estado/horários; início não verifica conflitos de atribuição. | Concentrar transições; validar rota ativa, motorista/veículo, capacidade e conflitos conforme regras acordadas. |
-| P1-04 | [security.py](backend/app/security.py) confia no perfil do JWT sem conferir o estado atual da conta. | Revalidar conta/permissões e definir revogação, expiração, rotação de chave e controle de tentativas. |
-| P1-05 | [apiClient.ts](mobile/busguard/services/apiClient.ts) não define timeout; `restoreSession` remove sessão em qualquer falha; `apiFetch` sempre tenta ler JSON. | Distinguir falha de rede de token inválido, centralizar `401/403`, tratar `204`, cancelar requisições e fornecer erros úteis. |
-| P1-06 | [AlunoItem.tsx](mobile/busguard/components/AlunoItem.tsx) inicializa estado com props sem sincronização; a tela reverte apenas seu próprio estado. | Usar estado controlado, rollback visual consistente e controle de operações pendentes para evitar divergência com polling. |
+| P1-04 | Conta e perfil atuais agora são conferidos em cada requisição. | Definir revogação por logout/senha, rotação de chave e controle de tentativas. |
+| P1-05 | `restoreSession` diferencia falha de rede de token inválido; `apiFetch` centraliza `401`, trata `204` e limita requisições a 10 segundos. | Ampliar cancelamento por ciclo de vida da tela e política uniforme para `403`. |
+| P1-06 | `AlunoItem` usa valor controlado; embarque espera confirmação antes de atualizar e bloqueia toques repetidos. | Validar disputas entre polling e operação em andamento nas plataformas. |
 | P1-07 | [trip_service.py](backend/app/services/trip_service.py) escolhe só um filho, ignora sequência de paradas e consulta o último evento separadamente para cada aluno. | Suportar seleção de filhos, definir associação aluno/parada e agrupar consultas para eliminar o padrão N+1. |
 | P1-08 | `datetime.now()` sem fuso nas ações/seeds; banco mistura `DATETIME` e `TIMESTAMP`. | Definir política de UTC e data operacional, configurar fusos e migrar dados antigos com critérios explícitos. |
 | P1-09 | Listagens sem teto de `limit`; e-mail é `str`; CPF/RG/CNH têm sobretudo limites de tamanho; updates aceitam `null` em campos persistidos obrigatórios. | Validar limites, formatos e coerência do domínio; tornar atualizações previsíveis e erros consistentes. |
-| P1-10 | Não há suíte automatizada, lint/format configurados nem CI versionada. | Introduzir testes de autorização, transições, eventos e sessão; gates de tipagem, qualidade e migrações em cada PR. |
+| P1-10 | Há testes iniciais de autorização mobile em `backend/tests/`; lint/format e CI ainda não estão configurados. | Ampliar testes de autorização, transições, eventos e sessão; adicionar gates de tipagem, qualidade e migrações em cada PR. |
 | P1-11 | Compose sem healthchecks; `/health` não verifica DB; imagens usam reload, credenciais locais e publicação da porta MySQL. | Criar prontidão do banco, healthchecks, configuração de produção, usuário de container sem privilégios e gestão de segredos/rede. |
 | P1-12 | Backend sem lock completo; ausência de auditoria de dependências e de operação documentada. | Travar resolução compatível, revisar vulnerabilidades, configurar logs/identificadores de requisição, métricas, backups e ensaiar restauração. |
 | P1-13 | [PassengerRead](backend/app/schemas/passengers.py) herda `facial`; não há política documentada de retenção/auditoria. | Minimizar DTOs, restringir acesso a biometria e formalizar controles de privacidade e preservação do histórico. |
@@ -324,7 +323,7 @@ Cenários mínimos para novas suítes: token inválido/expirado; usuário/perfil
 | Inventário XML dos modelos `.mwb` | **15 tabelas em cada artefato.** | Modelo atual alinhado em nomes; backup com duas nomenclaturas anteriores. |
 | Consulta ao engine Docker | **Indisponível.** | Socket do Docker Desktop Linux não encontrado; API/MySQL não foram iniciados nesta análise. |
 
-Não foram executados login real, requisições de viagem/embarque, seeds, reset de dados, exportação web ou builds Android/iOS. Não há testes automatizados do projeto a declarar como aprovados. Tipagem e sintaxe aprovadas não anulam os problemas identificados por leitura do código.
+Na análise inicial de 6 de outubro, não foram executados login real, requisições de viagem/embarque, seeds, reset de dados, exportação web ou builds Android/iOS. Em 8 de outubro, cinco testes isolados de autorização de viagem passaram com SQLite, e a exportação web do Expo passou. Os testes de JWT e dependências de rota ainda exigem instalar todas as dependências Python. Não houve validação com MySQL nem build Android/iOS.
 
 ## 14. Referências e manutenção do documento
 

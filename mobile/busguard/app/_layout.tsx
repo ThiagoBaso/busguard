@@ -2,9 +2,11 @@ import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { SessionProvider, useSession } from '@/services/session';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -39,19 +41,43 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return <SessionProvider><RootLayoutNav /></SessionProvider>;
 }
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
+  const { status, retry, logout } = useSession();
+
+  if (status === 'checking') {
+    return <View style={styles.center}><Text>Verificando sessão...</Text></View>;
+  }
+
+  if (status === 'unavailable') {
+    return (
+      <View style={styles.center}>
+        <Text>Não foi possível verificar sua sessão. Confira a conexão.</Text>
+        <Pressable onPress={() => void retry()}><Text style={styles.action}>Tentar novamente</Text></Pressable>
+        <Pressable onPress={() => void logout()}><Text style={styles.action}>Sair</Text></Pressable>
+      </View>
+    );
+  }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        <Stack.Protected guard={status === 'signedOut'}>
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+        </Stack.Protected>
+        <Stack.Protected guard={status === 'signedIn'}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        </Stack.Protected>
       </Stack>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
+  action: { color: '#0f766e', fontWeight: '700' },
+});

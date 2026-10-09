@@ -49,17 +49,8 @@ from app.services.admin_service import (
     update_record,
     update_user as update_user_service,
 )
-from app.services.seed_service import seed_demo_data
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-@router.post("/seed-demo")
-def seed_demo(
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("admin")),
-):
-    return seed_demo_data(db)
 
 
 @router.get("/addresses", response_model=list[AddressRead])

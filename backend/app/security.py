@@ -5,6 +5,10 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.users import User
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,8 @@ def create_access_token(user_id: int, role: str):
     )
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme)
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
 ):
 
     credentials_exception = HTTPException(
@@ -85,10 +90,11 @@ def get_current_user(
         if user_id is None or role is None:
             raise credentials_exception
 
-        return {
-            "id": int(user_id),
-            "role": role
-        }
+        user = db.get(User, int(user_id))
+        if user is None or user.role != role:
+            raise credentials_exception
+
+        return {"id": user.id, "role": user.role}
 
     except RuntimeError:
         logger.exception("Authentication configuration error while validating token")

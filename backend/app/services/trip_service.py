@@ -9,6 +9,7 @@ from app.models.drivers import Driver
 from app.models.passengers import Passenger
 from app.models.passengers_responsibles import PassengerResponsible
 from app.models.responsibles import Responsible
+from app.models.supervisors import Supervisor
 from app.models.route_passengers import RoutePassenger
 from app.models.routes import Route
 from app.models.trips import Trip
@@ -29,46 +30,49 @@ class TripNotInProgressError(Exception):
     pass
 
 
-def _active_trip_query(db: Session):
+def _trip_query(db: Session):
     return (
         db.query(Trip, Route, Vehicle, Driver, User)
         .join(Route, Route.id == Trip.route_id)
         .join(Vehicle, Vehicle.id == Trip.vehicle_id)
         .join(Driver, Driver.id == Trip.driver_id)
         .join(User, User.id == Driver.users_id)
-        .filter(Trip.status == "in_progress")
         .order_by(Trip.started_at.desc(), Trip.id.desc())
     )
 
 
-def get_driver_current_trip(db: Session, user_id: int) -> dict:
-    row = (
-        _active_trip_query(db)
-        .filter(Driver.users_id == user_id)
-        .first()
-    )
+def _active_trip_query(db: Session):
+    return _trip_query(db).filter(Trip.status == "in_progress")
 
-    if not row:
-        row = _active_trip_query(db).first()
+
+def _authorized_trip_query(db: Session, user_id: int, role: str, active_only: bool = True):
+    query = _active_trip_query(db) if active_only else _trip_query(db)
+    if role == "driver":
+        return query.filter(Driver.users_id == user_id)
+    if role == "supervisor":
+        return query.join(Supervisor, Supervisor.id == Trip.supervisor_id).filter(
+            Supervisor.user_id == user_id
+        )
+    return query.filter(Trip.id == -1)
+
+
+def get_driver_current_trip(db: Session, user_id: int, role: str) -> dict:
+    row = _authorized_trip_query(db, user_id, role).first()
 
     if not row:
         raise CurrentTripNotFoundError
 
     trip, route, vehicle, _driver, _driver_user = row
     students = _build_boarding_students(db, trip)
-    next_stop = next((student for student in students if not student.checkedIn), students[0] if students else _empty_student())
     checked_count = sum(1 for student in students if student.checkedIn)
     total = len(students) or 1
 
     return {
         "id": trip.id,
         "routeName": route.name,
-        "schoolName": "Escola Vila Verde",
         "vehicleLabel": f"{vehicle.model} {checked_count}/{vehicle.capacity} alunos",
         "status": "Em andamento",
         "progressLabel": f"{round((checked_count / total) * 100)}% concluido",
-        "averageSpeed": "28 km/h",
-        "nextStop": next_stop,
         "students": students,
     }
 
@@ -107,6 +111,8 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
 
     trip, route, vehicle, _driver, driver_user = row
     passenger = db.get(Passenger, passenger_link.passengers_id)
+    if passenger is None:
+        raise CurrentTripNotFoundError
     latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id, trip.started_at)
     child_status = "A bordo" if latest_event and latest_event.action == "entry" else "Aguardando embarque"
     last_update = latest_event.created_at.strftime("%H:%M") if latest_event else "--:--"
@@ -114,23 +120,26 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
     return {
         "id": trip.id,
         "routeName": route.name,
-        "schoolName": "Escola Vila Verde",
         "status": "Em transito",
-        "childName": passenger.name if passenger else "Aluno",
+        "childName": passenger.name,
         "childStatus": child_status,
-        "eta": "12 min",
         "lastUpdate": last_update,
-        "nextStop": _next_stop_address(db, trip.route_id),
         "driverName": driver_user.name,
         "vehicleLabel": f"{vehicle.model} - {vehicle.plate}",
     }
 
 
-def set_boarding_status(db: Session, trip_id: int, passenger_id: int, checked_in: bool) -> dict:
-    trip = db.get(Trip, trip_id)
-
-    if not trip:
+def set_boarding_status(
+    db: Session, trip_id: int, passenger_id: int, checked_in: bool,
+    user_id: int, role: str,
+) -> dict:
+    authorized_trip = _authorized_trip_query(db, user_id, role, active_only=False).filter(
+        Trip.id == trip_id
+    ).first()
+    if not authorized_trip:
         raise CurrentTripNotFoundError
+
+    trip = authorized_trip[0]
 
     if trip.status != "in_progress":
         raise TripNotInProgressError
@@ -225,35 +234,7 @@ def _latest_event_for_passenger(
     return query.order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc()).first()
 
 
-def _next_stop_address(db: Session, route_id: int) -> str:
-    address = (
-        db.query(Address)
-        .join(Passenger, Passenger.addresses_id == Address.id)
-        .join(RoutePassenger, RoutePassenger.passenger_id == Passenger.id)
-        .filter(RoutePassenger.route_id == route_id, RoutePassenger.active == True)
-        .order_by(Address.id)
-        .first()
-    )
-
-    if not address:
-        return "Rota monitorada"
-
-    return f"{address.rua}, {address.numero}"
-
 
 def _age_from_birth_date(birth_date: date) -> int:
     today = date.today()
     return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
-
-
-def _empty_student() -> BoardingStudent:
-    return BoardingStudent(
-        id="0",
-        name="Sem alunos",
-        age=0,
-        stopOrder=0,
-        stopName="Rota",
-        address="Nenhuma parada",
-        checkedIn=False,
-        status="waiting",
-    )

@@ -1,46 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
-import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 
 import { Text, View } from '@/components/Themed';
-import { CurrentUser, login, restoreSession } from '@/services/apiClient';
-import type { AppProfile } from '@/services/tripService';
+import { ApiError } from '@/services/apiClient';
+import { useSession } from '@/services/session';
 
 export default function LoginScreen() {
-  const [profile, setProfile] = useState<AppProfile>('driver');
-  const [email, setEmail] = useState('joao.pereira@transportescolar.com');
-  const [password, setPassword] = useState('Busguard@123');
+  const { login } = useSession();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    restoreSession().then((user) => {
-      if (user) {
-        navigateByRole(user);
-      }
-    });
-  }, []);
-
-  function selectProfile(nextProfile: AppProfile) {
-    setProfile(nextProfile);
-    setEmail(
-      nextProfile === 'driver'
-        ? 'joao.pereira@transportescolar.com'
-        : 'maria.fernandes@email.com',
-    );
-  }
 
   async function handleLogin() {
     setError(null);
     setLoading(true);
 
     try {
-      const user = await login(email, password);
-      navigateByRole(user);
-    } catch {
-      setError('Nao foi possivel entrar. Verifique e-mail e senha.');
+      await login(email, password);
+    } catch (caught) {
+      setError(caught instanceof ApiError && caught.status === 401
+        ? 'E-mail ou senha inválidos.'
+        : 'Não foi possível conectar. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -66,21 +49,6 @@ export default function LoginScreen() {
           </View>
           <Text style={styles.title}>BusGuard</Text>
           <Text style={styles.subtitle}>Acompanhe rotas escolares com seguranca.</Text>
-
-          <View style={styles.roleGroup}>
-            <Pressable
-              style={[styles.roleButton, profile === 'driver' && styles.roleButtonActive]}
-              onPress={() => selectProfile('driver')}>
-              <Text style={[styles.roleText, profile === 'driver' && styles.roleTextActive]}>Motorista</Text>
-              <Text style={styles.roleHint}>Supervisor</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.roleButton, profile === 'responsible' && styles.roleButtonActive]}
-              onPress={() => selectProfile('responsible')}>
-              <Text style={[styles.roleText, profile === 'responsible' && styles.roleTextActive]}>Responsavel</Text>
-              <Text style={styles.roleHint}>Crianca</Text>
-            </Pressable>
-          </View>
 
           <TextInput
             style={styles.input}
@@ -129,15 +97,6 @@ export default function LoginScreen() {
   );
 }
 
-function navigateByRole(user: CurrentUser) {
-  if (user.role === 'responsible') {
-    router.replace('/(tabs)/two');
-    return;
-  }
-
-  router.replace('/(tabs)');
-}
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -182,37 +141,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginTop: 6,
     marginBottom: 22,
-  },
-  roleGroup: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 18,
-    backgroundColor: 'transparent',
-  },
-  roleButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 8,
-    padding: 14,
-    backgroundColor: '#f8fafc',
-  },
-  roleButtonActive: {
-    borderColor: '#0f766e',
-    backgroundColor: '#ecfdf5',
-  },
-  roleText: {
-    color: '#334155',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  roleTextActive: {
-    color: '#0f766e',
-  },
-  roleHint: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginTop: 4,
   },
   input: {
     height: 52,

@@ -65,7 +65,7 @@ Toda leitura ou alteração de dados protegidos deve verificar **perfil e acesso
 - Motoristas só devem acessar viagens atribuídas a eles. Supervisores devem ser verificados pelo vínculo de supervisão. Permissões administrativas precisam ser explícitas.
 - Responsáveis só devem acessar os passageiros vinculados a sua conta. Considere múltiplos filhos e não aceite um identificador enviado pelo aplicativo como prova de vínculo.
 - No embarque, valide usuário → viagem → passageiro → veículo/rota antes de persistir. Não amplie o acesso quando nenhum recurso autorizado for encontrado.
-- Não replique o fallback atual que retorna qualquer viagem ativa para um motorista sem viagem própria. O problema está registrado como P0 no `project.md`.
+- Não reintroduza o fallback que retornava qualquer viagem ativa para um motorista sem viagem própria. A correção está registrada no `project.md`.
 - JWT assinado não substitui consulta às políticas de acesso. Ao alterar autenticação, trate usuário excluído, mudança de perfil, expiração e estratégia de revogação.
 - Não registre tokens, senhas, documentos, endereços completos ou dados faciais em logs. Use identificadores e metadados mínimos quando necessários à auditoria.
 - Não copie dados reais de alunos para fixtures, seeds ou exemplos. Dados faciais, quando usados como biometria de uma pessoa, exigem proteção específica; avalie a necessidade de coletá-los antes de expandir essa funcionalidade.
@@ -74,13 +74,13 @@ Toda leitura ou alteração de dados protegidos deve verificar **perfil e acesso
 
 ## 6. Banco de dados e migrações
 
-- O Compose inicializa o banco com `database/init.sql` e `database/megamock.sql`. `init.sql` é a referência operacional atual; os modelos ORM também precisam refletir suas constraints.
+- O Compose inicializa volumes novos apenas com `database/init.sql`. `database/megamock.sql` é uma fixture manual para ambiente isolado; os modelos ORM também precisam refletir as constraints de `init.sql`.
 - Confira PKs, FKs, unicidade, índices, enums, defaults, nulabilidade e comportamento de exclusão nas duas representações antes de alterar entidades.
 - `create_tables.sql` duplica o bootstrap; `transport_schema.sql` é complementar. Não execute todos os arquivos SQL como se formassem uma sequência de migrações.
 - Alterações em banco existente exigem migração explícita e plano de recuperação. Atualizar `init.sql` não atualiza volumes já criados. Alembic é uma melhoria proposta, ainda não configurada.
 - Quando Alembic for adotado, revise manualmente migrações geradas, especialmente renomes e operações destrutivas, conforme sua [documentação](https://alembic.sqlalchemy.org/en/latest/autogenerate.html).
 - Nunca execute `delete_all_rows.sql`, `docker compose down -v`, exclusões de dados ou redefinições de senhas como rotina de validação. Só use operações destrutivas com autorização específica para o ambiente e os dados envolvidos.
-- Não execute `/admin/seed-demo` nem `app.scripts.seed_demo` como checagem: eles alteram dados e redefinem credenciais de demonstração.
+- Não execute `app.scripts.seed_demo` como checagem: ele altera dados e redefine credenciais de demonstração. O endpoint `/admin/seed-demo` foi removido.
 - Não desabilite FKs para contornar erros da aplicação. Corrija relacionamentos, ordem de operações e migrações.
 - Testes de persistência devem usar banco isolado e descartável; prefira MySQL 8.0 para verificar comportamentos específicos desse banco.
 
@@ -89,7 +89,7 @@ Toda leitura ou alteração de dados protegidos deve verificar **perfil e acesso
 - Mantenha TypeScript estrito. Evite `any`, coerções que ocultem incompatibilidades e regras de autorização exclusivamente na interface.
 - Requisições e persistência de sessão pertencem aos serviços; componentes devem lidar com interação e apresentação.
 - Separe carregamento, ausência de viagem, erro de autenticação, falta de conexão e dados de demonstração. Falha de API não deve parecer uma viagem real atualizada.
-- Tokens nativos usam SecureStore. O cliente web atual usa `localStorage`; mudanças nessa sessão precisam considerar XSS e desenho de backend, cookies e CSRF. Não apresente esse armazenamento como proteção contra XSS.
+- Tokens nativos usam SecureStore. A sessão web atual fica apenas em memória e termina ao recarregar a página; mudanças nessa sessão precisam considerar XSS, cookies e CSRF. Não apresente armazenamento em memória como proteção completa contra XSS.
 - Ao evoluir o cliente HTTP, considere timeout, cancelamento, tratamento uniforme de `401/403` e respostas sem corpo, como `204`.
 - Centralize o estado do embarque ou sincronize-o corretamente com novas props. Atualizações otimistas precisam reverter a UI em caso de falha e evitar disputas com polling e toques repetidos.
 - Os fluxos atuais consultam a API a cada 15 segundos. Mudanças devem limpar timers, evitar requisições concorrentes e respeitar foco da tela e ciclo de vida do aplicativo.
@@ -116,7 +116,7 @@ Toda leitura ou alteração de dados protegidos deve verificar **perfil e acesso
 
 O `/health` atual não verifica o banco. Não use sua resposta como comprovação de autenticação, viagens ou persistência.
 
-Não há suíte automatizada, configuração de lint/format ou CI versionada na análise inicial. Não afirme que `pytest`, `npm test` ou `npm run lint` passaram sem que essas ferramentas tenham sido configuradas e executadas.
+Há testes de autorização mobile em `backend/tests/`; ainda não há configuração de lint/format ou CI versionada. Não afirme que `pytest`, `npm test` ou `npm run lint` passaram sem que essas ferramentas tenham sido configuradas e executadas.
 
 Para alterações de comportamento, escreva verificações que detectem regressões relevantes: acesso à viagem de outro usuário, embarque fora da rota, transição inválida, repetição/concorrência de eventos, sessão expirada e rollback visual. Correções apenas documentais não exigem novos testes da aplicação.
 

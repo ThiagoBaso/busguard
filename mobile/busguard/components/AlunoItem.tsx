@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { StyleSheet, Pressable } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { Checkbox } from 'expo-checkbox';
 
 import { Text, View } from '@/components/Themed';
@@ -7,15 +6,15 @@ import type { BoardingStudent } from '@/services/tripService';
 
 type AlunoItemProps = {
   aluno: BoardingStudent;
-  onBoardingChange?: (aluno: BoardingStudent, checkedIn: boolean) => void;
+  disabled?: boolean;
+  onBoardingChange: (aluno: BoardingStudent, checkedIn: boolean) => void;
 };
 
-export default function AlunoItem({ aluno, onBoardingChange }: AlunoItemProps) {
-  const [embarcado, setEmbarcado] = useState(aluno.checkedIn);
+export default function AlunoItem({ aluno, disabled = false, onBoardingChange }: AlunoItemProps) {
+  const embarcado = aluno.checkedIn;
   const isAbsent = aluno.status === 'absent';
   const toggleBoarding = (checkedIn: boolean) => {
-    setEmbarcado(checkedIn);
-    onBoardingChange?.(aluno, checkedIn);
+    if (!disabled && !isAbsent) onBoardingChange(aluno, checkedIn);
   };
 
   return (
@@ -29,19 +28,17 @@ export default function AlunoItem({ aluno, onBoardingChange }: AlunoItemProps) {
           {aluno.age} anos - Parada {String(aluno.stopOrder).padStart(2, '0')} ({aluno.stopName})
         </Text>
       </View>
-      <Pressable
-        style={[styles.status, embarcado && styles.statusChecked, isAbsent && styles.statusAbsent]}
-        onPress={() => !isAbsent && toggleBoarding(!embarcado)}>
+      <View style={[styles.status, embarcado && styles.statusChecked, isAbsent && styles.statusAbsent]}>
         <Checkbox
           value={embarcado}
-          disabled={isAbsent}
+          disabled={disabled || isAbsent}
           onValueChange={toggleBoarding}
           color={embarcado ? '#10b981' : undefined}
         />
         <Text style={[styles.statusText, embarcado && styles.statusTextChecked]}>
           {isAbsent ? 'Ausente' : embarcado ? `Presente ${aluno.time ? `(${aluno.time})` : ''}` : 'Aguardando'}
         </Text>
-      </Pressable>
+      </View>
     </View>
   );
 }

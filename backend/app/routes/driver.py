@@ -16,7 +16,7 @@ router = APIRouter(prefix="/driver", tags=["driver"])
 
 
 def require_driver_or_supervisor(current_user=Depends(get_current_user)):
-    if current_user["role"] not in {"driver", "supervisor", "admin"}:
+    if current_user["role"] not in {"driver", "supervisor"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
@@ -31,7 +31,7 @@ def current_trip(
     current_user=Depends(require_driver_or_supervisor),
 ):
     try:
-        return get_driver_current_trip(db, current_user["id"])
+        return get_driver_current_trip(db, current_user["id"], current_user["role"])
 
     except CurrentTripNotFoundError:
         raise HTTPException(
@@ -53,6 +53,8 @@ def update_boarding(
             trip_id=trip_id,
             passenger_id=data.passenger_id,
             checked_in=data.checked_in,
+            user_id=current_user["id"],
+            role=current_user["role"],
         )
 
     except CurrentTripNotFoundError:
