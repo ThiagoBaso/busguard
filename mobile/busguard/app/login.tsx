@@ -8,8 +8,12 @@ import { useSession } from '@/services/session';
 
 export default function LoginScreen() {
   const { login } = useSession();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Contas de demonstração para testes locais:
+  // admin: email admin@transportescolar.com | senha Busguard@123
+  // driver: email joao.pereira@transportescolar.com | senha Busguard@123
+  // responsible: email maria.fernandes@email.com | senha Busguard@123
+  const [email, setEmail] = useState(__DEV__ ? 'joao.pereira@transportescolar.com' : '');
+  const [password, setPassword] = useState(__DEV__ ? 'Busguard@123' : '');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

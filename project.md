@@ -219,7 +219,7 @@ A versão web usa `web.output: static` em `app.json`; uma exportação web não 
 
 ### Contas de demonstração
 
-O Compose não cria contas de demonstração e a tela de login não preenche credenciais. O arquivo `database/megamock.sql` permanece apenas como fixture manual para ambiente isolado de desenvolvimento. Bancos já inicializados podem conservar contas antigas.
+O Compose não cria contas de demonstração. No modo de desenvolvimento, a tela de login preenche e-mail e senha do motorista da fixture para facilitar testes; em builds de produção, os campos começam vazios. O arquivo [login.tsx](mobile/busguard/app/login.tsx) comenta as credenciais de admin, motorista e responsável para testes locais. O arquivo `database/megamock.sql` permanece apenas como fixture manual para ambiente isolado de desenvolvimento. A conta precisa existir no banco para autenticar; bancos já inicializados podem conservar contas antigas.
 
 ## 9. Configuração de ambiente
 
@@ -249,7 +249,7 @@ Prioridades propostas para orientar o trabalho: **P0** deve ser resolvido antes 
 | P0-01 | Corrigido em 8 de outubro de 2026: leitura de viagem filtra motorista ou supervisor vinculado. | Verificar em teste de integração com MySQL antes de uso real. |
 | P0-02 | Corrigido em 8 de outubro de 2026: embarque recebe identidade e exige vínculo com a viagem. | Verificar em teste de integração com MySQL antes de uso real. |
 | P0-03 | Corrigido em 8 de outubro de 2026: aplicativo removeu fallback mock; telas não mantêm viagem após erro. | Validar a experiência em Android, iOS e web com API indisponível e sessão expirada. |
-| P0-04 | Corrigido em 8 de outubro de 2026: Compose não carrega seed, endpoint de seed removido e login sem preenchimento. | Limpar apenas ambientes antigos cujo conteúdo tenha sido avaliado; proteger fixtures remanescentes de uso em produção. |
+| P0-04 | Compose não carrega seed e o endpoint de seed foi removido em 8 de outubro de 2026. O preenchimento do motorista foi habilitado somente no modo de desenvolvimento em 9 de outubro. | Limpar apenas ambientes antigos cujo conteúdo tenha sido avaliado; proteger fixtures remanescentes de uso em produção. |
 
 Os dois primeiros itens são avaliação de risco a partir do código e se enquadram no problema de autorização por objeto descrito pela [OWASP API Security](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/).
 
