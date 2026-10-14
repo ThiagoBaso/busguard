@@ -8,7 +8,7 @@ Data: **14 de outubro de 2026**, ambiente Windows. Escopo: somente infraestrutur
 | --- | --- |
 | Python | 3.14.3 local; código e AST compatíveis com sintaxe Python 3.12. Runtime 3.12 não executado. |
 | Git | 2.53.0.windows.2; snapshots, diff sem commits e fronteira Git temporária verificados. |
-| Codex CLI | 0.162.0-alpha.17.2; ajuda, flags e features consultadas. `login status` informou ausência de login. |
+| Codex CLI | Consulta inicial: 0.162.0-alpha.17.2 sem login. Verificação posterior: 0.162.1 autenticado via ChatGPT, com sessões reais de Planner/Reviewer aprovadas no teste descrito abaixo. |
 | OpenCode | 2.0.16; `--version`, ajuda de `run`, resolução do `.exe` e configuração isolada conferidos. |
 | LM Studio/lms | CLI commit 69d945a; servidor local na porta 1234; `/v1/models`, `/api/v1/models`, `/api/v0/models`, `lms ls`, `lms ps` e ajuda load/unload consultados. |
 | GPUs | RTX 3070 e RTX 3060 Ti, cada uma com 8192 MiB; nome, memória e utilização consultados por `nvidia-smi`. |
@@ -38,7 +38,18 @@ O smoke carregou o Qwen3 14B pelo comando nativo `lms load`; não descarregou mo
 
 ## Limitações pendentes de integração externa
 
-Nenhuma chamada de teste a Planner ou Reviewer Cloud foi executada. As sessões, argumentos, leitura de JSON e métricas foram testados com mocks; flags reais foram consultadas. Para validar o percurso Cloud, autentique o CLI com `codex login` no seu terminal e autorize antecipadamente o teste e seu orçamento. Não há garantia de que a autenticação do editor esteja disponível no subprocesso CLI.
+Após o usuário realizar login e autorizar explicitamente o teste, foram executadas **duas sessões reais Cloud**, uma por papel, com o adaptador `CodexCLI` existente. O Planner retornou JSON válido, restrito ao schema de embarque; o Reviewer recebeu o plano validado, as fontes antes/depois e o relatório dos 15 testes locais e retornou **approved**, sem achados. O teste confirmou autenticação, execução não interativa, respostas estruturadas, validação de escopo e métricas. Não chamou o Coder nem alterou código da aplicação.
+
+| Sessão | Duração do subprocesso | Tokens de entrada | Tokens de saída | Chamadas de ferramenta |
+| --- | --- | --- | --- | --- |
+| Planner | 16,20 s | 10.670 | 598 | 0 |
+| Reviewer | 10,24 s | 11.892 | 160 | 0 |
+
+Orçamento: duas chamadas, incluindo falhas; consumidas duas, sem repetição automática. Artefatos: `runs/cloud-login-check/cloud-check.json`, `planner.json`, `reviewer.json` e prompts de entrada. A revisão Cloud analisou evidências de execução local; não executou testes por conta própria. Foi conferida a preservação do schema por hash antes/depois. Tokens de raciocínio, tempo exclusivo de inferência e velocidade não foram informados.
+
+Neste ambiente, `login status` e `--status` dentro do sandbox externo informaram ausência de login; fora dele, ambos reconheceram a sessão ChatGPT. O teste autorizado usou acesso à sessão fora desse sandbox, mantendo as restrições do adaptador: CLI em `read-only`, sem ferramentas, apps, MCP ou descoberta de skills. Nenhuma credencial foi incluída nos prompts. O uso no terminal do usuário deve ser verificado com `--status`; não presuma que o login esteja visível em qualquer ambiente de execução.
+
+O **ciclo completo automatizado** Planner → Coder → checks → Reviewer, incluindo correções, ainda não foi validado integralmente com provedores reais numa única execução. Este teste verificou os dois adaptadores Cloud separadamente e reutilizou a entrega local já revisada; não transforma os relatórios anteriores em `completed`. A suíte de mocks continua sendo a evidência dos cenários de falha e orçamento.
 
 Não foi executada comparação real entre 14B e 35B nem verificação de offload/placement por camada. Quantização, contexto, processos concorrentes e placement nativo podem mudar tempo e memória. Recuperação gerenciada restaura apenas parâmetros suportados; use o inventário/auditoria para recuperar configurações extras manualmente.
 

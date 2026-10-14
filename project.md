@@ -144,7 +144,7 @@ Com a API iniciada, a documentação automática fica em [Swagger UI local](http
 | `POST /auth/login` | Público. | JSON com `email` e `password`; retorna `access_token` e `token_type`. |
 | `GET /auth/me` | Bearer JWT válido e conta existente com mesmo perfil. | Retorna `id` e `role` atuais do banco. |
 | `GET /driver/trips/current` | `driver` ou `supervisor` vinculado. | DTO mobile da viagem ativa autorizada. |
-| `POST /driver/trips/{trip_id}/boarding` | `driver` ou `supervisor` vinculado à viagem. | JSON com `passenger_id` e `checked_in`. |
+| `POST /driver/trips/{trip_id}/boarding` | `driver` ou `supervisor` vinculado à viagem. | JSON com `passenger_id` inteiro positivo e `checked_in`, ambos obrigatórios. |
 | `GET /responsible/children/current-trip` | `responsible`, `admin`. | Viagem de um passageiro vinculado ao usuário. |
 | CRUD `/admin/...` | `admin`. | Cadastros e vínculos listados abaixo. |
 | `POST /admin/trips/{trip_id}/start`, `/finish`, `/cancel` | `admin`. | Ações de viagem. |
@@ -155,6 +155,8 @@ Com a API iniciada, a documentação automática fica em [Swagger UI local](http
 Recursos CRUD administrativos: `addresses`, `users`, `passengers`, `vehicles`, `cnh`, `drivers`, `driver-vehicles`, `responsibles`, `passenger-responsibles`, `routes`, `route-stops`, `route-passengers`, `supervisors`, `trips`. Oferecem `GET/POST` na coleção e `PUT/DELETE` por `{record_id}`; não há `GET` individual nessas rotas. Listagens usam `limit=100` e `offset=0`, sem limites declarados de validação. Os `PUT` atuais aceitam campos parciais com `exclude_unset=True`.
 
 Referências: [rotas administrativas](backend/app/routes/admin.py), [autenticação](backend/app/routes/auth.py), [contratos mobile](backend/app/schemas/mobile_trips.py) e [cliente de viagens](mobile/busguard/services/tripService.ts).
+
+No pedido de embarque, `passenger_id` igual a zero ou negativo retorna HTTP 422 para um usuário com perfil autorizado, antes de chamar o serviço. `checked_in=false` continua representando desembarque; o campo permanece obrigatório. A mudança não altera as verificações de vínculo com a viagem.
 
 Há uma diferença entre a declaração de segurança e o endpoint de login: `OAuth2PasswordBearer` aponta para um endpoint que recebe JSON, enquanto o fluxo OAuth2 de senha usado normalmente pelo Swagger envia formulário. O aplicativo envia JSON corretamente; o fluxo de autorização da documentação deve ser revisado. Não foi validado em execução nesta análise.
 
@@ -221,6 +223,17 @@ A versão web usa `web.output: static` em `app.json`; uma exportação web não 
 
 O Compose não cria contas de demonstração e a tela de login não preenche credenciais. O arquivo `database/megamock.sql` permanece apenas como fixture manual para ambiente isolado de desenvolvimento. Bancos já inicializados podem conservar contas antigas.
 
+### Testes do backend
+
+Em um ambiente Python de desenvolvimento com as dependências instaladas, execute a partir de `backend/`:
+
+```powershell
+python -m pip install -r requirements-test.txt
+python -B -m unittest discover -s tests -v
+```
+
+[requirements-test.txt](backend/requirements-test.txt) inclui as dependências da API e o cliente HTTP `httpx` usado somente nos testes. Os testes de embarque exercitam o schema e a rota real com banco, autenticação e serviço isolados. Os testes de autorização usam SQLite em memória; não substituem a validação com MySQL nem um fluxo completo de login no ambiente da aplicação.
+
 ## 9. Configuração de ambiente
 
 | Variável | Uso | Observação |
@@ -265,8 +278,8 @@ Os dois primeiros itens são avaliação de risco a partir do código e se enqua
 | P1-06 | `AlunoItem` usa valor controlado; embarque espera confirmação antes de atualizar e bloqueia toques repetidos. | Validar disputas entre polling e operação em andamento nas plataformas. |
 | P1-07 | [trip_service.py](backend/app/services/trip_service.py) escolhe só um filho, ignora sequência de paradas e consulta o último evento separadamente para cada aluno. | Suportar seleção de filhos, definir associação aluno/parada e agrupar consultas para eliminar o padrão N+1. |
 | P1-08 | `datetime.now()` sem fuso nas ações/seeds; banco mistura `DATETIME` e `TIMESTAMP`. | Definir política de UTC e data operacional, configurar fusos e migrar dados antigos com critérios explícitos. |
-| P1-09 | Listagens sem teto de `limit`; e-mail é `str`; CPF/RG/CNH têm sobretudo limites de tamanho; updates aceitam `null` em campos persistidos obrigatórios. | Validar limites, formatos e coerência do domínio; tornar atualizações previsíveis e erros consistentes. |
-| P1-10 | Há testes iniciais de autorização mobile em `backend/tests/`; lint/format e CI ainda não estão configurados. | Ampliar testes de autorização, transições, eventos e sessão; adicionar gates de tipagem, qualidade e migrações em cada PR. |
+| P1-09 | Parcial: `passenger_id` do embarque exige valor positivo. Listagens continuam sem teto de `limit`; e-mail é `str`; CPF/RG/CNH têm sobretudo limites de tamanho; updates aceitam `null` em campos persistidos obrigatórios. | Ampliar validação dos demais identificadores, limites, formatos e coerência do domínio; tornar atualizações previsíveis e erros consistentes. |
+| P1-10 | Há testes de autorização mobile e contrato HTTP de embarque em `backend/tests/`; lint/format e CI ainda não estão configurados. | Ampliar testes de autorização, transições, eventos e sessão; adicionar gates de tipagem, qualidade e migrações em cada PR. |
 | P1-11 | Compose sem healthchecks; `/health` não verifica DB; imagens usam reload, credenciais locais e publicação da porta MySQL. | Criar prontidão do banco, healthchecks, configuração de produção, usuário de container sem privilégios e gestão de segredos/rede. |
 | P1-12 | Backend sem lock completo; ausência de auditoria de dependências e de operação documentada. | Travar resolução compatível, revisar vulnerabilidades, configurar logs/identificadores de requisição, métricas, backups e ensaiar restauração. |
 | P1-13 | [PassengerRead](backend/app/schemas/passengers.py) herda `facial`; não há política documentada de retenção/auditoria. | Minimizar DTOs, restringir acesso a biometria e formalizar controles de privacidade e preservação do histórico. |
@@ -324,6 +337,12 @@ Cenários mínimos para novas suítes: token inválido/expirado; usuário/perfil
 | Consulta ao engine Docker | **Indisponível.** | Socket do Docker Desktop Linux não encontrado; API/MySQL não foram iniciados nesta análise. |
 
 Na análise inicial de 6 de outubro, não foram executados login real, requisições de viagem/embarque, seeds, reset de dados, exportação web ou builds Android/iOS. Em 8 de outubro, cinco testes isolados de autorização de viagem passaram com SQLite, e a exportação web do Expo passou. Os testes de JWT e dependências de rota ainda exigem instalar todas as dependências Python. Não houve validação com MySQL nem build Android/iOS.
+
+Em 14 de outubro de 2026, a primeira tarefa da aplicação pelo sistema multiagente adicionou a validação de ID positivo no embarque. O Coder local OpenCode + LM Studio gerou o diff em workspace isolado, e um Reviewer independente conferiu a integração. **15 testes do backend passaram**: oito novos de contrato e sete existentes de autorização, incluindo invalidação de JWT após alteração de perfil/exclusão de usuário. Python local 3.14.3; sintaxe dos arquivos alterados conferida para Python 3.12. A execução usou dependências já instaladas e pacotes de autenticação faltantes instalados em uma pasta temporária da tarefa, sem modificar o ambiente global. O comando comum inicialmente encontrou duas falhas por dependências ausentes; a repetição com essa pasta explicitamente incluída passou. Isso valida o contrato e os cenários isolados cobertos, sem comprovar compatibilidade com MySQL, hash de senha, execução no container ou fluxo completo no aplicativo.
+
+O primeiro resultado do modelo foi rejeitado por alterar contratos fora do escopo; somente o diff mínimo posterior foi integrado. O relatório original dessa execução permaneceu registrado como falha, com validação posterior separada. Plano, revisão e evidências estão em `PLAN.md`, `REVIEW.md` e `.agent-system/runs/boarding-id-validation/`. A implementação original não fez inferência pelo Codex CLI Cloud.
+
+Após login e autorização explícita do usuário, um teste separado realizou duas chamadas Cloud: o Planner produziu um plano JSON válido e o Reviewer aprovou o contrato com base nas fontes e nas evidências locais. O código não foi alterado nesse teste. Os resultados estão em `.agent-system/runs/cloud-login-check/`; consulte [VERIFICATION.md](.agent-system/VERIFICATION.md) para métricas e acesso à autenticação. Os adaptadores Cloud foram verificados, mas o ciclo completo automatizado com Coder e correções numa única execução ainda não foi demonstrado.
 
 ## 14. Referências e manutenção do documento
 
