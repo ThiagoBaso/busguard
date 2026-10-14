@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class BoardingStudent(BaseModel):
@@ -23,7 +23,7 @@ class DriverTripResponse(BaseModel):
 
 
 class BoardingRequest(BaseModel):
-    passenger_id: int
+    passenger_id: int = Field(gt=0)
     checked_in: bool
 
 

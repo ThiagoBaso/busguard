@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "changes_requested",
+        "validation_pending"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "requested_change": {
+            "type": "string"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "awaiting_verification",
+              "resolved"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "file",
+          "evidence",
+          "requested_change",
+          "mandatory",
+          "state"
+        ]
+      }
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "findings"
+  ]
+}

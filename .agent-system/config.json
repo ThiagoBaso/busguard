@@ -1,0 +1,28 @@
+{
+  "local_llm": {
+    "provider": "lmstudio",
+    "base_url": "http://localhost:1234/v1",
+    "default_model": "qwen14b",
+    "context_length": 8192,
+    "timeout_seconds": 600,
+    "output_tokens": 2048,
+    "models": {
+      "qwen14b": {"id": "qwen3-14b", "context_length": 8192},
+      "qwen35b": {"id": "qwen/qwen3.6-35b-a3b", "context_length": 8192}
+    },
+    "gpu": {"use_available_gpus": true, "load_mode": "native"}
+  },
+  "cloud": {"executable": "codex", "model": null, "timeout_seconds": 600},
+  "opencode": {"executable": "opencode"},
+  "limits": {
+    "max_cloud_calls": 4,
+    "max_corrections": 2,
+    "max_steps": 12,
+    "max_context_chars": 24000,
+    "total_timeout_seconds": 3600
+  },
+  "checks": ["python-syntax", "diff-check"],
+  "verification": {"timeout_seconds": 120},
+  "monitoring": {"gpu": true, "ram": true, "interval_seconds": 1.0},
+  "benchmark": {"tasks_file": "benchmarks/tasks.json", "require_exclusive_model": true}
+}
