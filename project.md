@@ -330,3 +330,9 @@ Na análise inicial de 6 de outubro, não foram executados login real, requisiç
 As recomendações usam as fontes oficiais citadas nas seções correspondentes: Expo SDK 57, FastAPI, OWASP, Docker, Alembic e LGPD. Migrações geradas automaticamente precisam de revisão humana, especialmente porque o projeto já apresenta diferenças entre modelos e SQL. [Documentação Alembic sobre autogeração](https://alembic.sqlalchemy.org/en/latest/autogenerate.html).
 
 Atualize este documento quando mudarem arquitetura, versões, configuração, endpoints ou fluxo operacional. Ao implementar um item do diagnóstico, registre a evidência e ajuste seu estado; não mantenha problemas resolvidos como pendências atuais. Mantenha procedimentos de trabalho em `agent.md` e fatos do projeto aqui.
+
+## 15. Infraestrutura multiagente de desenvolvimento
+
+O diretório [`.agent-system/`](.agent-system/README.md) contém um orquestrador independente em Python 3.12+, sem dependências da aplicação: Planner e Reviewer via Codex CLI com inferência Cloud, Coder via OpenCode 2.x e LM Studio local. As tarefas trabalham em cópias sanitizadas, validam planos/revisões JSON, limitam chamadas Cloud e correções e produzem diff/relatórios; não aplicam mudanças, commits ou operações de banco/Docker ao projeto principal.
+
+A CLI permite consultar hardware e modelos, validar sem inferência, planejar, executar localmente ou com revisão e comparar modelos em snapshots equivalentes. Os testes da infraestrutura estão em `.agent-system/tests/` e usam mocks para os provedores. Modelos/autenticação são verificados em execução; um benchmark com Cloud exige confirmação explícita. Consulte o README específico para configuração, comandos, restrições de testes não confiáveis e recuperação do runtime.

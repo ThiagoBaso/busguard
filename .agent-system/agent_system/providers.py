@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import dataclasses
+import json
+import os
+import re
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from .config import ModelSpec
+from .errors import ProviderError, SafetyError
+from .process import clean_environment, executable, run_process
+from .security import cloud_text, redact, safe_relative
+
+
+def events(text: str) -> list[dict]:
+    result = []
+    for line in text.splitlines():
+        try:
+            value = json.loads(line)
+            if isinstance(value, dict):
+                result.append(value)
+        except ValueError:
+            continue
+    return result
+
+
+def usage_metrics(stream: list[dict], elapsed: float, provider: str) -> dict:
+    usages, seen = [], set()
+    tools, errors = set(), set()
+    for event in stream:
+        part = event.get("part") or {}
+        kind = event.get("type")
+        if provider == "codex" and kind == "turn.completed" and isinstance(event.get("usage"), dict):
+            usages.append(event["usage"])
+        if provider == "opencode" and kind == "step_finish" and isinstance(part.get("tokens"), dict):
+            identity = part.get("id") or json.dumps(part, sort_keys=True)
+            if identity not in seen:
+                seen.add(identity)
+                tokens = part["tokens"]
+                usages.append({"input_tokens": tokens.get("input"), "output_tokens": tokens.get("output"), "reasoning_tokens": tokens.get("reasoning"), "cached_input_tokens": (tokens.get("cache") or {}).get("read"), "cache_write_tokens": (tokens.get("cache") or {}).get("write")})
+        if kind == "tool_use":
+            identity = part.get("callID") or part.get("id") or json.dumps(part, sort_keys=True)
+            tools.add(identity)
+            if (part.get("state") or {}).get("status") == "error":
+                errors.add(identity)
+        item = event.get("item") or {}
+        if kind == "item.completed" and item.get("type") in {"command_execution", "mcp_tool_call", "web_search"}:
+            tools.add(item.get("id") or json.dumps(item, sort_keys=True))
+    def total(field):
+        values = [u.get(field) for u in usages]
+        return sum(values) if values and all(type(v) in {int, float} for v in values) else None
+    return {"provider": provider, "elapsed_seconds": elapsed, "input_tokens": total("input_tokens"), "output_tokens": total("output_tokens"), "cached_input_tokens": total("cached_input_tokens"), "reasoning_tokens": total("reasoning_tokens"), "cache_write_tokens": total("cache_write_tokens"), "inference_seconds": None, "tokens_per_second": None, "tool_calls": len(tools) if stream else None, "tool_errors": len(errors) if stream else None}
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        raise ProviderError("Redirecionamento LM Studio bloqueado antes de conectar a outro host.")
+
+
+class LMStudio:
+    def __init__(self, config: dict, *, opener=None, runner=run_process):
+        self.config, self.opener, self.runner = config, opener or build_opener(NoRedirect()).open, runner
+        self.base_url = config["base_url"].rstrip("/")
+        self.origin = self.base_url.removesuffix("/v1")
+
+    def request(self, endpoint: str) -> dict:
+        try:
+            with self.opener(Request(endpoint, headers={"Accept": "application/json"}), timeout=5) as response:
+                if response.geturl().split("/", 3)[:3] != endpoint.split("/", 3)[:3]:
+                    raise ProviderError("LM Studio redirecionou para um host externo; conexão bloqueada.")
+                data = response.read(2_000_001)
+                if len(data) > 2_000_000:
+                    raise ProviderError("Resposta LM Studio excedeu limite.")
+                value = json.loads(data)
+                if not isinstance(value, dict):
+                    raise ProviderError("LM Studio retornou JSON sem objeto na raiz.")
+                return value
+        except (URLError, OSError, ValueError) as exc:
+            raise ProviderError(f"LM Studio indisponível em {self.base_url}: {exc}") from exc
+
+    def inventory(self) -> dict:
+        compatible = self.request(self.base_url + "/models")
+        if not isinstance(compatible, dict) or not isinstance(compatible.get("data"), list) or any(not isinstance(m, dict) or not isinstance(m.get("id"), str) or not m["id"] for m in compatible["data"]):
+            raise ProviderError("LM Studio retornou lista de modelos inválida.")
+        models = []
+        native = None
+        try:
+            native = self.request(self.origin + "/api/v1/models")
+        except ProviderError:
+            try:
+                native = self.request(self.origin + "/api/v0/models")
+            except ProviderError:
+                pass
+        if native and isinstance(native.get("models"), list):
+            for model in native["models"]:
+                if not isinstance(model, dict) or not isinstance(model.get("key"), str) or not model["key"] or not isinstance(model.get("loaded_instances", []), list):
+                    raise ProviderError("Modelo nativo LM Studio malformado.")
+                instances = model.get("loaded_instances", [])
+                if any(not isinstance(i, dict) or not isinstance(i.get("id"), str) or not isinstance(i.get("config", {}), dict) for i in instances):
+                    raise ProviderError("Instância LM Studio malformada.")
+                for context in [model.get("max_context_length")] + [(i.get("config") or {}).get("context_length") for i in instances]:
+                    if context is not None and (type(context) is not int or context <= 0):
+                        raise ProviderError("Contexto LM Studio inválido.")
+                models.append({"id": model["key"], "type": model.get("type"), "loaded": bool(instances), "instances": instances, "max_context_length": model.get("max_context_length"), "quantization": model.get("quantization"), "size_bytes": model.get("size_bytes")})
+        elif native and isinstance(native.get("data"), list):
+            for model in native["data"]:
+                if not isinstance(model, dict) or not isinstance(model.get("id"), str) or model.get("state") not in {"loaded", "not-loaded"}:
+                    raise ProviderError("Modelo LM Studio v0 malformado.")
+                models.append({"id": model["id"], "type": model.get("type"), "loaded": model.get("state") == "loaded", "instances": [{"id": model["id"], "config": {"context_length": model.get("loaded_context_length")}}] if model.get("state") == "loaded" else [], "max_context_length": model.get("max_context_length"), "quantization": model.get("quantization")})
+        else:
+            models = [{"id": model["id"], "type": None, "loaded": None, "instances": []} for model in compatible["data"]]
+        return {"base_url": self.base_url, "models": models, "native_inventory": native is not None, "model_gpu_distribution": None}
+
+    def ensure_model(self, spec: ModelSpec, *, load=False) -> tuple[ModelSpec, dict]:
+        inventory = self.inventory()
+        model = next((m for m in inventory["models"] if m["id"] == spec.id or any(i.get("id") == spec.id for i in m["instances"])), None)
+        if model is None:
+            raise ProviderError(f"Modelo não encontrado: {spec.id}. Execute --status e configure um ID real.")
+        if model.get("type") == "embedding" or model.get("type") == "embeddings":
+            raise ProviderError("Modelo de embeddings não pode executar o Coder.")
+        if model.get("max_context_length") and spec.context_length > model["max_context_length"]:
+            raise ProviderError(f"Contexto solicitado excede o máximo informado pelo modelo {spec.id}.")
+        if model["loaded"] is False:
+            if not load:
+                raise ProviderError(f"Modelo {spec.id} instalado, mas não carregado. Carregue no LM Studio ou use --load-model.")
+            gpu = self.config.get("gpu", {})
+            args = [executable("lms"), "load", model["id"], "--context-length", str(spec.context_length)]
+            # Sem --yes: preserva decisões e prompts nativos do runtime.
+            if not gpu.get("use_available_gpus", True):
+                args += ["--gpu", "off"]
+            elif gpu.get("load_mode") == "bionic-auto":
+                args += ["--auto"]
+            self.runner(args, cwd=Path.cwd(), timeout=spec.timeout_seconds)
+            return self.ensure_model(spec, load=False)
+        instance = next((i for i in model["instances"] if i.get("id") == spec.id), None) or next(iter(model["instances"]), None)
+        if instance:
+            context = (instance.get("config") or {}).get("context_length")
+            if context and context < spec.context_length:
+                raise ProviderError(f"Modelo carregado com contexto {context}; configuração solicita {spec.context_length}. Recarregue pelo LM Studio.")
+            spec = dataclasses.replace(spec, id=instance["id"])
+        return spec, model
+
+
+class CodexCLI:
+    DISABLED = ("shell_tool", "unified_exec", "code_mode", "code_mode_host", "code_mode_tool_search", "plugins", "apps", "multi_agent", "browser_use", "computer_use", "image_generation", "view_image", "skill_search", "workspace_dependencies", "unbounded_connection_retries", "hooks", "memories")
+
+    def __init__(self, config: dict, *, runner=run_process):
+        self.config, self.runner = config, runner
+
+    def probe(self, cwd: Path) -> dict:
+        exe = executable(self.config["executable"])
+        version = self.runner([exe, "--version"], cwd=cwd, timeout=20).stdout.strip()
+        help_text = self.runner([exe, "exec", "--help"], cwd=cwd, timeout=20).stdout
+        needed = ("--json", "--output-schema", "--output-last-message", "--sandbox", "--ignore-user-config", "--ephemeral")
+        if any(flag not in help_text for flag in needed):
+            raise ProviderError("Codex CLI incompatível: faltam flags de execução segura. Consulte exec --help.")
+        features = self.runner([exe, "features", "list"], cwd=cwd, timeout=20).stdout
+        known = {line.split()[0] for line in features.splitlines() if line.split()}
+        if not (set(self.DISABLED) | {"skip_host_skill_discovery"}) <= known:
+            raise ProviderError("Codex CLI não expõe as opções necessárias para desativar ferramentas; atualize/revise o adaptador.")
+        auth_env = clean_environment()
+        if "CODEX_HOME" in os.environ:
+            auth_env["CODEX_HOME"] = os.environ["CODEX_HOME"]
+        try:
+            auth = self.runner([exe, "login", "status"], cwd=cwd, timeout=20, env=auth_env)
+        except ProviderError as exc:
+            if "not logged" in str(exc).lower():
+                raise ProviderError("Codex CLI sem login. Execute codex login no seu terminal; nenhuma chave de API adicional é exigida.") from exc
+            raise
+        if "not logged" in (auth.stdout + auth.stderr).lower():
+            raise ProviderError("Codex CLI sem login. Execute codex login no seu terminal; nenhuma chave de API adicional é exigida.")
+        return {"version": version, "authenticated": True}
+
+    def invoke(self, role: str, prompt: str, schema: Path, directory: Path, *, timeout: float | None = None) -> tuple[dict, dict]:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / ".agent-context-root").touch()
+        output = directory / "response.json"
+        args = [executable(self.config["executable"]), "exec", "--ignore-user-config", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--json", "--output-schema", str(schema.resolve()), "--output-last-message", str(output.resolve()), "-c", 'web_search="disabled"', "-c", "mcp_servers={}", "-c", "project_doc_max_bytes=0", "-c", 'project_root_markers=[".agent-context-root"]', "--enable", "skip_host_skill_discovery"]
+        for feature in self.DISABLED:
+            args.extend(["--disable", feature])
+        if self.config.get("model"):
+            args += ["--model", self.config["model"]]
+        args.append("-")
+        env = clean_environment()
+        if "CODEX_HOME" in os.environ:
+            env["CODEX_HOME"] = os.environ["CODEX_HOME"]
+        try:
+            process = self.runner(args, cwd=directory, timeout=timeout or self.config["timeout_seconds"], input_text=prompt, env=env)
+            stream = events(process.stdout)
+            if any(e.get("type") in {"error", "turn.failed"} for e in stream):
+                raise ProviderError("Codex informou falha na sessão. Nenhuma aprovação registrada.")
+            if any((e.get("item") or {}).get("type") in {"command_execution", "mcp_tool_call", "web_search"} for e in stream):
+                raise SafetyError("Codex usou ferramenta fora do contrato sem ferramentas; resultado rejeitado.")
+            response = output.read_text(encoding="utf-8-sig")
+            cloud_text(response, 200000)
+            return json.loads(response), usage_metrics(stream, process.elapsed_seconds, "codex")
+        except (OSError, ValueError) as exc:
+            raise ProviderError(f"Resposta {role} inválida: {exc}") from exc
+        finally:
+            output.unlink(missing_ok=True)
+
+
+class OpenCodeCLI:
+    def __init__(self, config: dict, local_config: dict, *, runner=run_process):
+        self.config, self.local_config, self.runner = config, local_config, runner
+
+    def environment(self, directory: Path, spec: ModelSpec, allowed: list[str], readable: list[str]) -> dict:
+        env = clean_environment()
+        home = directory / "opencode"
+        for key, child in (("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache"), ("XDG_CONFIG_HOME", "config"), ("OPENCODE_CONFIG_DIR", "config"), ("OPENCODE_TEST_HOME", "home")):
+            target = home / child
+            target.mkdir(parents=True, exist_ok=True)
+            env[key] = str(target.resolve())
+        for key in ("OPENCODE_CONFIG_PROJECT_DISABLE", "OPENCODE_DISABLE_PROJECT_CONFIG", "OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_FILEWATCHER"):
+            env[key] = "true"
+        read = {"*": "deny"}
+        edit = {"*": "deny"}
+        for name in readable + ["PLAN.md"]:
+            safe_relative(name)
+            read[name] = "allow"
+        for name in allowed:
+            safe_relative(name, editable=True)
+            edit[name] = "allow"
+            read[name] = "allow"
+        permissions = {"*": "deny", "read": read, "edit": edit, "glob": "allow", "grep": "allow", "shell": "deny", "bash": "deny", "external_directory": "deny", "subagent": "deny", "task": "deny", "webfetch": "deny", "websearch": "deny", "question": "deny", "skill": "deny", "lsp": "deny"}
+        configuration = {"model": "lmstudio/" + spec.id, "small_model": "lmstudio/" + spec.id, "default_agent": "busguard-coder", "enabled_providers": ["lmstudio"], "provider": {"lmstudio": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": self.local_config["base_url"], "timeout": spec.timeout_seconds * 1000}, "models": {spec.id: {"name": spec.id, "limit": {"context": spec.context_length, "output": spec.output_tokens}}}}}, "permission": {"*": "deny"}, "agent": {"busguard-coder": {"mode": "primary", "steps": 12, "permission": permissions}}, "snapshot": False, "plugin": [], "mcp": {}, "formatter": False, "lsp": False, "autoupdate": False, "share": "disabled"}
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(configuration)
+        env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps({"plugins": [], "session": {"permissions": "prompt"}})
+        return env
+
+    def probe(self, directory: Path, spec: ModelSpec) -> dict:
+        exe = executable(self.config["executable"])
+        env = self.environment(directory, spec, [], [])
+        version = self.runner([exe, "--version"], cwd=directory, timeout=20, env=env).stdout.strip()
+        help_text = self.runner([exe, "run", "--help"], cwd=directory, timeout=20, env=env).stdout
+        if any(flag not in help_text for flag in ("--standalone", "--format", "--model", "--agent")):
+            raise ProviderError("OpenCode incompatível: este adaptador exige run --standalone --format json --model --agent.")
+        version_match = re.fullmatch(r"(?:opencode\s+v?)?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?", version, re.IGNORECASE)
+        if not version_match or version_match.group(1) != "2":
+            raise ProviderError("Adaptador conferido para OpenCode 2.x. Revise configurações antes de usar outra versão.")
+        return {"version": ".".join(version_match.groups()), "version_raw": version, "standalone": True}
+
+    def invoke(self, prompt: str, workspace: Path, spec: ModelSpec, allowed: list[str], readable: list[str], directory: Path, *, timeout: float | None = None) -> dict:
+        env = self.environment(directory, spec, allowed, readable)
+        args = [executable(self.config["executable"]), "run", "--standalone", "--format", "json", "--model", "lmstudio/" + spec.id, "--agent", "busguard-coder"]
+        process = self.runner(args, cwd=workspace, timeout=timeout or spec.timeout_seconds, input_text=prompt, env=env)
+        stream = events(process.stdout)
+        if not stream:
+            raise ProviderError("OpenCode não retornou eventos JSON; resultado não verificável.")
+        if any(e.get("type") == "error" for e in stream):
+            message = redact(json.dumps(next(e for e in stream if e.get("type") == "error"), ensure_ascii=False))
+            if any(marker in message.lower() for marker in ("out of memory", "cuda oom", "not enough memory")):
+                raise ProviderError("Falta de memória no OpenCode/LM Studio: " + message[:1500])
+            raise ProviderError("OpenCode informou erro: " + message[:1500])
+        return usage_metrics(stream, process.elapsed_seconds, "opencode")

@@ -44,6 +44,43 @@ A stack atual usa Python 3.12 na imagem, FastAPI, SQLAlchemy com sessões síncr
 - Use português brasileiro na documentação e nas mensagens ao usuário. Preserve convenções locais de nomes de código.
 - Para decisões com impacto duradouro, registre uma decisão de arquitetura curta com contexto, escolha, alternativas e consequências. `docs/adr/` é um local recomendado, ainda inexistente.
 
+### 3.1. Trabalho com múltiplos agentes
+
+Use múltiplos agentes quando separar implementação, investigação ou revisão permitir avançar em paralelo ou melhorar a qualidade. Mantenha o esforço proporcional à tarefa; mudanças pequenas podem usar um agente para implementação e outro para revisão. Todos devem ler as instruções aplicáveis ao seu escopo, preservar alterações existentes e respeitar a autorização do usuário.
+
+Para execução automatizada, consulte o [sistema multiagente local](.agent-system/README.md). Ele mantém plano, revisão e estado por tarefa em `.agent-system/runs/`, sem sobrescrever os arquivos de controle da raiz; chamadas Cloud de benchmarks e escalonamento exigem confirmação explícita no CLI. Execuções sem Reviewer Cloud devem ser identificadas como verificadas localmente, sem declarar aprovação Cloud.
+
+| Papel | Responsabilidade |
+| --- | --- |
+| **Coordenador / Planner** | Entender o pedido, manter `PLAN.md`, definir escopo e critérios de aceite, distribuir tarefas, integrar entregas e comunicar o resultado. O agente principal pode acumular esses dois papéis. |
+| **Coder** | Implementar as etapas atribuídas do plano aprovado, executar as verificações pertinentes e relatar alterações, resultados e impedimentos. |
+| **Reviewer** | Revisar o diff e as evidências de validação, registrar achados em `REVIEW.md` e verificar as correções. Deve ser um agente diferente de quem implementou o trecho revisado. |
+
+**Plano e autorização (`PLAN.md`)**
+
+- `PLAN.md` contém o plano aprovado da tarefa atual: objetivo e escopo, etapas identificadas, responsáveis, dependências, arquivos ou áreas permitidas, critérios de aceite e verificações previstas. Registre o estado do plano e a origem da aprovação; um arquivo vazio ou um plano antigo não representa aprovação da tarefa atual.
+- O Coordenador / Planner aprova decisões de implementação dentro do escopo já autorizado pelo usuário. Aproveite autorizações existentes na conversa; peça esclarecimento ou autorização adicional apenas quando necessário para resolver uma decisão fora desse escopo.
+- O Coder deve executar as etapas atribuídas de `PLAN.md` e **não deve modificar esse arquivo**, nem para marcar progresso. Reporte o andamento ao Coordenador / Planner, responsável por manter o plano atualizado.
+- Se uma etapa for inviável ou exigir alteração de escopo, o Coder deve relatar o motivo e propor o ajuste. O Coordenador / Planner registra a revisão e sua autorização antes de redistribuir a etapa afetada; tarefas independentes podem continuar.
+
+**Delegação e integração**
+
+- Antes de delegar, informe objetivo, etapas do plano, contexto necessário, arquivos permitidos, dependências e critério verificável de entrega.
+- Atribua um responsável por arquivo alterado durante cada etapa. Agentes podem ler os mesmos arquivos, mas edições no mesmo arquivo devem ocorrer em sequência. Defina também um único responsável por consolidar `PLAN.md` e outro por consolidar `REVIEW.md`.
+- Execute em paralelo tarefas independentes. Compartilhe decisões que afetem contratos entre backend, banco e mobile antes de implementar partes dependentes.
+- Cada Coder entrega ao Coordenador / Planner um resumo com etapas atendidas, arquivos alterados, verificações executadas e resultados, além de riscos ou impedimentos. O Coordenador / Planner confere o diff integrado e os contratos entre as entregas antes da revisão final.
+
+**Revisão e correções (`REVIEW.md`)**
+
+- `REVIEW.md` contém os achados e solicitações de correção do Reviewer, associados à tarefa e à versão do plano ou do diff revisado. Registre também o resultado da revisão, mesmo quando não houver achados: `aprovado`, `correções necessárias` ou `validação pendente`.
+- Cada achado deve ter identificador, gravidade, arquivo/local afetado, evidência, impacto, correção esperada ou critério de resolução e estado (`aberto`, `aguardando verificação` ou `resolvido`). Distinga correções obrigatórias de sugestões opcionais; sugestões não ampliam automaticamente o escopo.
+- O Coder corrige os achados atribuídos e informa ao Reviewer o que mudou e como foi verificado. Não apague achados nem marque como resolvida a própria correção; somente o Reviewer atualiza as conclusões de `REVIEW.md` após conferir o resultado. Divergências devem ser resolvidas com evidências e registradas pelo Reviewer.
+- O Reviewer verifica aderência ao plano, regressões, contratos, autorização e integridade dos dados quando aplicáveis, além da suficiência das verificações. Reavalie os trechos corrigidos e seus efeitos antes de aprovar a entrega.
+
+**Conclusão da tarefa**
+
+Não considere uma tarefa concluída apenas porque o código foi escrito ou porque um subagente terminou. O Coordenador / Planner encerra a tarefa quando os critérios de aceite forem atendidos no resultado integrado, as verificações necessárias passarem e o Reviewer aprovar esse resultado, com todas as correções obrigatórias resolvidas. Achados obrigatórios em estado `aberto` ou `aguardando verificação` impedem a conclusão. Uma validação necessária não executada deve ficar registrada como pendente, com motivo e impacto, sem ser apresentada como aprovação. Aplique também o [critério geral de conclusão](#10-critério-de-conclusão).
+
 ## 4. Backend e contratos HTTP
 
 - Use tipagem explícita nas interfaces novas e recursos compatíveis com Python 3.12. Adote `snake_case` em funções, variáveis e módulos; `PascalCase` em classes.

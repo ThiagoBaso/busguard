@@ -1,0 +1,18 @@
+[
+  {
+    "name": "normalizar-identificador",
+    "plan": {
+      "task": "No arquivo benchmark_fixture/normalizer.py, implemente normalize_id(value): aceitar int positivo (não bool) e str composta apenas por dígitos que represente inteiro positivo; rejeitar zero, negativos, floats, bool e outros valores com ValueError. Retornar int. Preserve os testes existentes.",
+      "acceptance_criteria": ["Todos os testes de normalização passam.", "Somente o arquivo atribuído é alterado."],
+      "risks": ["Fixture sintética independente da aplicação; testes precisam de --allow-test-execution."],
+      "steps": [
+        {"id": "normalize", "title": "Implementar normalização", "instructions": "Implemente normalize_id conforme a tarefa e leia tests/test_benchmark_normalizer.py; não altere os testes.", "files": ["benchmark_fixture/normalizer.py"], "depends_on": [], "checks": ["python-syntax", "diff-check", "unit-tests"]}
+      ]
+    },
+    "fixtures": {
+      "benchmark_fixture/__init__.py": "",
+      "benchmark_fixture/normalizer.py": "def normalize_id(value):\n    raise NotImplementedError\n",
+      "tests/test_benchmark_normalizer.py": "import unittest\nfrom benchmark_fixture.normalizer import normalize_id\n\nclass NormalizerTests(unittest.TestCase):\n    def test_positive(self):\n        for value, expected in [(1, 1), (42, 42), ('003', 3), ('12', 12)]:\n            self.assertEqual(normalize_id(value), expected)\n\n    def test_invalid(self):\n        for value in [0, -1, 1.2, True, False, None, '', '-2', '0', ' 2 ', '2.0']:\n            with self.subTest(value=value), self.assertRaises(ValueError):\n                normalize_id(value)\n"
+    }
+  }
+]
