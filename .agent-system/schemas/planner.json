@@ -56,6 +56,13 @@
               ]
             },
             "minItems": 1
+          },
+          "required_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arquivos obrigat?rios que devem existir e estar acess?veis antes desta etapa."
           }
         },
         "required": [
@@ -64,7 +71,8 @@
           "instructions",
           "files",
           "depends_on",
-          "checks"
+          "checks",
+          "required_files"
         ]
       }
     }

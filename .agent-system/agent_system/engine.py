@@ -19,6 +19,7 @@ from .validation import validate_plan, validate_review
 from .workspace import Snapshot, Workspace
 from .ledger import TaskLedger
 from .usage import normalized
+from .references import discover, preflight, attach, prepare_visual, IMAGE_SUFFIXES
 
 
 class CloudBudget:
@@ -55,6 +56,9 @@ class Engine:
             safe_relative(name)
             if name not in snapshot.files:
                 raise SafetyError(f"Arquivo de contexto ausente ou excluído por segurança: {name}")
+            if Path(name).suffix.lower() in IMAGE_SUFFIXES:
+                pieces.append(f"Referência visual anexada separadamente: {name}")
+                continue
             value = snapshot.files[name].decode("utf-8-sig")
             if not explicit and len(value) > 5000:
                 value = value[:5000] + "\n[Excerto; arquivo não enviado integralmente.]"
@@ -92,7 +96,7 @@ class Engine:
             self.ledger.record(cid, metrics, status)
             write_report(directory, report)
 
-    def run(self, task: str, *, model_alias=None, local_only=False, no_reviewer=False, plan_only=False, plan=None, files=None, context_files=None, snapshot=None, load_model=False, allow_test_execution=False, exclusive_model=False, preflight_error=None, task_id=None, coder_backend="local", confirm_cloud_coder=False, planning_feedback=None) -> dict:
+    def run(self, task: str, *, model_alias=None, local_only=False, no_reviewer=False, plan_only=False, plan=None, files=None, context_files=None, snapshot=None, load_model=False, allow_test_execution=False, exclusive_model=False, preflight_error=None, task_id=None, coder_backend="local", confirm_cloud_coder=False, planning_feedback=None, reference_files=None, require_visual=False) -> dict:
         if not isinstance(task, str) or not task.strip() or len(task) > 12000 or "\x00" in task:
             raise SafetyError("Tarefa vazia ou inválida (máximo 12000 caracteres).")
         spec = select_model(self.config, model_alias)
@@ -105,6 +109,9 @@ class Engine:
                 self.coder = CloudCoder(self.config["cloud"], self.config["limits"]["max_context_chars"])
         elif not self.coder_override and isinstance(self.coder, CloudCoder):
             self.coder = OpenCodeCLI(self.config["opencode"], self.config["local_llm"])
+        for provider in (self.cloud, self.coder, getattr(self.coder, "cloud", None)):
+            if isinstance(provider, CodexCLI):
+                provider.visual_images = []
         self.ledger = TaskLedger(self.root, task_id, redact(task), self.config["limits"])
         directory = self.new_directory()
         started = time.monotonic()
@@ -132,9 +139,21 @@ class Engine:
         try:
             with monitor:
                 state("snapshot")
+                reference_names = discover(task, reference_files or [])
+                references = preflight(self.root, reference_names)
                 snapshot = snapshot or Snapshot.capture(self.root)
+                if references:
+                    attach(snapshot, self.root, references)
                 report["snapshot_digest"] = snapshot.digest
                 workspace = Workspace(directory, snapshot)
+                report["references"] = references
+                report["visual_required"] = require_visual or any(r["image"] for r in references)
+                if report["visual_required"]:
+                    # Both stages must receive images; a text-only Coder cannot silently substitute prose.
+                    if not plan_only:
+                        report["coder_visual"] = prepare_visual(self.coder, workspace.path, references)
+                    if not local_only:
+                        report["cloud_visual"] = prepare_visual(self.cloud, workspace.path, references)
                 if plan is None:
                     if local_only:
                         if not files:
@@ -185,10 +204,23 @@ class Engine:
                         checks.append("workspace-scripts")
                     for step in plan["steps"]:
                         state("coding:" + step["id"])
+                        preflight(workspace.path, step.get("required_files", []))
                         before = workspace.checkpoint()
                         prompt = coder_instructions + "\nEtapa atribuída:\n" + json.dumps(step, ensure_ascii=False) + "\nCritérios de aceite:\n" + json.dumps(plan["acceptance_criteria"], ensure_ascii=False)
-                        self.invoke_recorded("coder", coder_backend, self.coder, lambda: self.coder.invoke(prompt, workspace.path, spec, step["files"], readable, directory, timeout=min(coder_timeout, remaining())), report, directory)
+                        result = self.invoke_recorded("coder", coder_backend, self.coder, lambda: self.coder.invoke(prompt, workspace.path, spec, step["files"], readable, directory, timeout=min(coder_timeout, remaining())), report, directory)
+                        if result.get("requirements_met") is False:
+                            raise AgentError("Coder relatou requisito obrigatório não cumprido; etapa interrompida.")
                         workspace.verify_step(before, set(step["files"]))
+                        if preflight(workspace.path, reference_names) != references:
+                            raise SafetyError("Coder modificou referência obrigatória; resultado rejeitado.")
+                        step_changed = [name for name, data in workspace.checkpoint().items() if before.get(name) != data]
+                        # The last step enters the existing validation/local-correction loop.
+                        # Earlier steps must not advance with broken deterministic requirements.
+                        deterministic = [name for name in step["checks"] if name in {"python-syntax", "diff-check"}] if step is not plan["steps"][-1] else []
+                        evidence = run_checks(workspace.path, deterministic, step_changed, timeout=min(self.config["verification"]["timeout_seconds"], remaining())) if deterministic else []
+                        report.setdefault("step_checks", []).append({"step": step["id"], "checks": evidence})
+                        if any(c["status"] != "passed" for c in evidence):
+                            raise AgentError("Verificação obrigatória da etapa falhou; próxima etapa bloqueada.")
                     seen = set()
                     while True:
                         state("checking")
@@ -278,7 +310,7 @@ class Engine:
             if workspace:
                 try:
                     patch = workspace.diff()
-                    (directory / "changes.patch").write_text(redact(patch), encoding="utf-8")
+                    (directory / "changes.patch").write_bytes(redact(patch).encode("utf-8"))
                     report["patch_redacted"] = redact(patch) != patch
                 except AgentError as exc:
                     report["diff_error"] = redact(str(exc))

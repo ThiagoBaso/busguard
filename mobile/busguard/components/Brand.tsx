@@ -35,7 +35,7 @@ export function BusIllustration() {
   return <View style={[styles.scene, { backgroundColor: theme.primarySoft }]} accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
     <View style={styles.sun} /><View style={[styles.hill, { backgroundColor: theme.dark ? '#244a40' : '#cbe8db' }]} /><View style={styles.path} />
     <View style={styles.bus}><View style={styles.windows}>{[0, 1, 2, 3].map(key => <View key={key} style={styles.window} />)}</View><View style={styles.busLine} /><View style={[styles.wheel, { left: 24 }]} /><View style={[styles.wheel, { right: 24 }]} /></View>
-    <View style={[styles.stopPole, { backgroundColor: theme.primary }]} /><View style={[styles.stopSign, { backgroundColor: theme.primary }]}><AppIcon name="bus" size={15} color="white" /></View>
+    <View style={[styles.stopPole, { backgroundColor: theme.primary }]} /><View style={[styles.stopSign, { backgroundColor: theme.primary }]}><AppIcon name="bus" size={15} color={theme.dark ? '#10271f' : 'white'} /></View>
   </View>;
 }
 

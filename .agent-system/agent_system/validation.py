@@ -29,7 +29,14 @@ def validate_plan(plan: dict, max_steps=12) -> dict:
     ids = set()
     seen_files = {}
     for step in plan["steps"]:
-        obj(step, {"id", "title", "instructions", "files", "depends_on", "checks"}, "Etapa")
+        if not isinstance(step, dict):
+            raise SafetyError("Etapa deve ser um objeto.")
+        required = {"id", "title", "instructions", "files", "depends_on", "checks"}
+        obj({k: v for k, v in step.items() if k != "required_files"}, required, "Etapa")
+        if "required_files" in step:
+            strings(step["required_files"], "required_files", nonempty=False)
+            for name in step["required_files"]:
+                safe_relative(name)
         for key in ("id", "title", "instructions"):
             if not isinstance(step[key], str) or not step[key].strip() or len(step[key]) > 12000:
                 raise SafetyError(f"Etapa com {key} inválido.")

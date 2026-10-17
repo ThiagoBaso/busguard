@@ -75,3 +75,69 @@ test('detalhes fora das abas reservam inset inferior de 48 px e espaço de toque
 test('telas nas abas deixam a barra tratar o inset sem duplicar margem inferior', () => {
   assert.equal(screenWithInsets(48, true).props.contentContainerStyle.at(-1).paddingBottom, 24);
 });
+
+function visualTheme(mode) {
+  return load('constants/theme.ts', {
+    '@/components/useColorScheme': { useColorScheme: () => mode },
+  }).themes[mode];
+}
+
+function contrast(foreground, background) {
+  const luminance = hex => {
+    const channels = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => a - b);
+  return (values[1] + 0.05) / (values[0] + 0.05);
+}
+
+for (const mode of ['light', 'dark']) {
+  test(`paleta ${mode} mantém contraste de texto nas superfícies e badges`, () => {
+    const theme = visualTheme(mode);
+    for (const foreground of [theme.text, theme.muted]) {
+      for (const background of [theme.background, theme.surface, theme.surfaceAlt]) {
+        assert.ok(contrast(foreground, background) >= 4.5, `${foreground} sobre ${background}`);
+      }
+    }
+    assert.ok(contrast(theme.success, theme.primarySoft) >= 4.5);
+    assert.ok(contrast(theme.primary, theme.primarySoft) >= 4.5);
+  });
+
+  test(`ícones das abas ${mode} recebem a cor ativa e inativa do navegador`, () => {
+    const element = (type, props) => ({ type, props });
+    const Tabs = Object.assign(() => {}, { Protected: 'Protected', Screen: 'Tab' });
+    const theme = visualTheme(mode);
+    const { default: TabLayout } = load('app/(tabs)/_layout.tsx', {
+      'react/jsx-runtime': { jsx: element, jsxs: element },
+      'expo-router': { Tabs },
+      '@/components/Brand': { AppIcon: 'Icon' },
+      '@/constants/theme': { useAppTheme: () => theme },
+      '@/services/session': { useSession: () => ({ user: { role: 'driver' } }) },
+    });
+    const tree = TabLayout();
+    const screens = tree.props.children.flatMap(child => child.type === 'Protected'
+      ? [child.props.children].flat() : [child]);
+    for (const screen of screens) {
+      const icon = screen.props.options.tabBarIcon;
+      assert.equal(icon({ color: theme.primary }).props.color, theme.primary);
+      assert.equal(icon({ color: theme.muted }).props.color, theme.muted);
+    }
+    assert.notEqual(theme.primary, theme.muted);
+  });
+
+  test(`página não encontrada ${mode} usa cor do tema sem variável indefinida`, () => {
+    const element = (type, props) => ({ type, props });
+    const theme = visualTheme(mode);
+    const { default: NotFound } = load('app/+not-found.tsx', {
+      'react/jsx-runtime': { jsx: element, jsxs: element, Fragment: 'Fragment' },
+      'expo-router': { Link: 'Link', Stack: { Screen: 'Screen' } },
+      'react-native': { StyleSheet: { create: styles => styles } },
+      '@/components/Themed': { Text: 'Text', View: 'View' },
+      '@/constants/theme': { useAppTheme: () => theme },
+    });
+    const link = NotFound().props.children[1].props.children[1];
+    assert.equal(link.props.children.props.style.at(-1).color, theme.primary);
+    assert.ok(contrast(theme.primary, theme.background) >= 4.5);
+  });
+}

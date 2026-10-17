@@ -34,6 +34,10 @@ def parser():
     mode.add_argument("--dry-run", action="store_true", help="Validar configuração/escopo local; não chama nenhum modelo.")
     mode.add_argument("--plan-only", action="store_true", help="Planejamento Cloud: consome uma chamada; não executa Coder.")
     mode.add_argument("--benchmark", action="store_true", help="Comparar tarefas fixas em cópias isoladas; local por padrão.")
+    mode.add_argument("--resume-run", type=Path, help="Nova tentativa somente de validação/revisão; preserva origem e nunca executa Planner/Coder.")
+    cli.add_argument("--confirm-cloud-review", action="store_true", help="Autorizar uma única revisão Cloud na retomada; não autoriza correções automáticas.")
+    cli.add_argument("--reference-file", action="append", default=[], help="Referência obrigatória acessível antes de qualquer chamada Cloud; repetir por arquivo.")
+    cli.add_argument("--require-visual", action="store_true", help="Exigir imagem real e comprovação de transporte/capacidade multimodal antes de implementar.")
     cli.add_argument("--local-only", action="store_true", help="Sem Planner/Reviewer Cloud; exige --file ou --plan-file.")
     cli.add_argument("--no-reviewer", action="store_true", help="Planejamento Cloud e execução local sem revisão Cloud.")
     cli.add_argument("--plan-file", type=Path, help="Reutilizar plano JSON validado; não chama Planner.")
@@ -93,6 +97,10 @@ def main(argv=None):
         root = args.root.resolve()
         if not root.is_dir():
             raise AgentError("Raiz do repositório não existe.")
+        if args.confirm_cloud_review and not args.resume_run:
+            raise AgentError("--confirm-cloud-review exige --resume-run.")
+        if args.resume_run and (args.task or args.plan_file or args.file or args.escalate_run or args.local_only or args.coder != "local" or args.no_reviewer or args.load_model or args.context_file or args.require_visual or args.task_id):
+            raise AgentError("Retomada não aceita tarefa/plano/Coder/escalonamento: usa somente o snapshot e task_id da origem.")
         for name in args.file:
             safe_relative(name, editable=True)
         for name in args.context_file:
@@ -123,7 +131,10 @@ def main(argv=None):
             args.task, args.task_id = old["task"], old["task_id"]
             planning_feedback = "Motivo: " + str(old.get("error")) + "\nVerificações: " + json.dumps(old.get("checks", []), ensure_ascii=False)
             args.plan_only = True
-        if args.hardware:
+        if args.resume_run:
+            from .recovery import resume
+            data = resume(Engine(config, root), args.resume_run, allow_test_execution=args.allow_test_execution, confirm_cloud_review=args.confirm_cloud_review, reference_files=args.reference_file)
+        elif args.hardware:
             data = {"gpu": gpu_snapshot(), "ram": ram_snapshot()}
         elif args.status:
             data = status(config, root, spec)
@@ -137,7 +148,7 @@ def main(argv=None):
             if not args.task:
                 cli.error("informe uma tarefa ou um modo como --status/--hardware/--dry-run")
             plan = json.loads(args.plan_file.read_text(encoding="utf-8-sig")) if args.plan_file else None
-            data = Engine(config, root).run(args.task, model_alias=args.model, local_only=args.local_only, no_reviewer=args.no_reviewer, plan_only=args.plan_only, plan=plan, files=args.file, context_files=args.context_file, load_model=args.load_model, allow_test_execution=args.allow_test_execution, task_id=args.task_id, coder_backend=args.coder, confirm_cloud_coder=args.confirm_cloud_coder, planning_feedback=planning_feedback)
+            data = Engine(config, root).run(args.task, model_alias=args.model, local_only=args.local_only, no_reviewer=args.no_reviewer, plan_only=args.plan_only, plan=plan, files=args.file, context_files=args.context_file, load_model=args.load_model, allow_test_execution=args.allow_test_execution, task_id=args.task_id, coder_backend=args.coder, confirm_cloud_coder=args.confirm_cloud_coder, planning_feedback=planning_feedback, reference_files=args.reference_file, require_visual=args.require_visual)
         print(json.dumps(data, ensure_ascii=False, indent=2))
         if data.get("status") and data["status"] not in {"completed", "local_verified", "checks_verified", "planned"}:
             return 2

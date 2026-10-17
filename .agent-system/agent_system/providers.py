@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import hashlib
 import re
 import uuid
 from pathlib import Path
@@ -155,6 +156,24 @@ class CodexCLI:
 
     def __init__(self, config: dict, *, runner=run_process):
         self.config, self.runner = config, runner
+        self.visual_images = []
+
+    def prepare_visual(self, images):
+        # Do not infer capabilities from a model's name or the account default.
+        model = self.config.get("model")
+        cache = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "models_cache.json"
+        try:
+            catalog = json.loads(cache.read_text(encoding="utf-8"))
+            entry = next(m for m in catalog["models"] if m.get("slug") == model)
+        except (OSError, ValueError, KeyError, StopIteration, TypeError) as exc:
+            raise SafetyError("Capacidade visual desconhecida: configure cloud.model explicitamente e atualize o catálogo local do Codex.") from exc
+        if not model or "image" not in entry.get("input_modalities", []):
+            raise SafetyError("O modelo Cloud selecionado não comprova suporte a imagens.")
+        help_text = self.runner([executable(self.config["executable"]), "exec", "--help"], cwd=images[0].parent, timeout=budget_timeout(self, 20)).stdout
+        if "--image" not in help_text:
+            raise SafetyError("Codex CLI não oferece transporte de imagens neste adaptador.")
+        self.visual_images = [(p.resolve(), hashlib.sha256(p.read_bytes()).hexdigest()) for p in images]
+        return {"model": model, "image_input": True, "attachments": len(images), "capability_source": str(cache), "transport": "codex exec --image"}
 
     def probe(self, cwd: Path) -> dict:
         exe = executable(self.config["executable"])
@@ -190,6 +209,10 @@ class CodexCLI:
             args.extend(["--disable", feature])
         if self.config.get("model"):
             args += ["--model", self.config["model"]]
+        for image, digest in self.visual_images:
+            if hashlib.sha256(image.read_bytes()).hexdigest() != digest:
+                raise SafetyError("Imagem alterada após confirmação do transporte multimodal.")
+            args += ["--image", str(image)]
         args.append("-")
         env = clean_environment()
         if "CODEX_HOME" in os.environ:
@@ -198,6 +221,8 @@ class CodexCLI:
             process = self.runner(args, cwd=directory, timeout=timeout or self.config["timeout_seconds"], input_text=prompt, env=env)
             stream = events(process.stdout)
             self.last_metrics = normalized({**usage_metrics(stream, process.elapsed_seconds, "codex"), "model": self.config.get("model"), "source": "codex.events"})
+            if self.visual_images:
+                self.last_metrics["image_attachments"] = [{"path": str(p), "sha256": digest} for p, digest in self.visual_images]
             if any(e.get("type") in {"error", "turn.failed"} for e in stream):
                 self.last_metrics["usage_complete"] = False
                 raise ProviderError("Codex informou falha na sessão. Nenhuma aprovação registrada.")
@@ -298,6 +323,16 @@ class OpenCodeCLI:
             if any(marker in message.lower() for marker in ("out of memory", "cuda oom", "not enough memory")):
                 raise ProviderError("Falta de memória no OpenCode/LM Studio: " + message[:1500])
             raise ProviderError("OpenCode informou erro: " + message[:1500])
+        completion = "\n".join(str(e.get("part", {}).get("text", "")) for e in stream if e.get("type") == "text")
+        markers = re.findall(r"<agent-result>(.*?)</agent-result>", completion, re.S)
+        try:
+            outcome = json.loads(markers[-1]) if markers else None
+        except ValueError:
+            outcome = None
+        if not isinstance(outcome, dict) or outcome.get("status") != "completed" or outcome.get("requirements_met") is not True:
+            self.last_metrics["requirements_met"] = False
+            raise ProviderError("Etapa não confirmou requisitos obrigatórios; implementação interrompida, sem avançar para a próxima etapa.")
+        self.last_metrics["requirements_met"] = True
         return self.last_metrics
 
 
@@ -317,6 +352,9 @@ class CloudCoder:
         self.cloud.remaining = getattr(self, "remaining", None)
         return {**self.cloud.probe(directory), "harness": "codex-structured-files", "model": self.config.get("model")}
 
+    def prepare_visual(self, images):
+        return self.cloud.prepare_visual(images)
+
     def invoke(self, prompt, workspace, spec, allowed, readable, directory, *, timeout=None):
         self.last_metrics = None
         context = {}
@@ -324,6 +362,8 @@ class CloudCoder:
             safe_relative(name)
             path = contained(workspace, name)
             if path.is_file():
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                    continue  # Binary input travels as an attachment, never as UTF-8 text.
                 context[name] = path.read_text(encoding="utf-8-sig")
         text = cloud_text(prompt + "\nReturn JSON files with exact paths and complete contents; null deletes a file. Only edit: " + json.dumps(allowed) + "\nRead-only context and current contents:\n" + json.dumps(context, ensure_ascii=False), self.max_context_chars)
         try:

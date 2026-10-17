@@ -253,3 +253,8 @@ Os testes utilizam mocks para provedores, indisponibilidade, OOM, revisões e or
 A [verificação registrada](VERIFICATION.md) distingue a suíte automatizada, consultas reais, smoke de inferência local e integrações Cloud ainda não executadas.
 
 Referências oficiais: [Codex não interativo](https://learn.chatgpt.com/docs/non-interactive-mode), [configuração Codex](https://learn.chatgpt.com/docs/config-file/config-reference), [OpenCode CLI](https://opencode.ai/docs/cli/), [permissões OpenCode](https://opencode.ai/docs/permissions/), [provider LM Studio no OpenCode](https://opencode.ai/docs/providers/#lm-studio), [inventário LM Studio](https://lmstudio.ai/docs/developer/rest/list), [lms load](https://lmstudio.ai/docs/cli/local-models/load). Interfaces da versão instalada prevalecem sobre exemplos antigos.
+# Recuperação de execuções
+
+Para validar ou revisar um snapshot existente sem repetir Planner/Coder, consulte
+[RECOVERY.md](RECOVERY.md). A revisão Cloud exige `--confirm-cloud-review`;
+a integração ao projeto continua dependendo de aprovação explícita.
