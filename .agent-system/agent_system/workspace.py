@@ -34,7 +34,8 @@ class Snapshot:
                 path = contained(root, name)
             except SafetyError:
                 continue
-            if not path.is_file() or path.stat().st_size > 250000:
+            limit = 2_000_000 if path.name in {"package-lock.json", "pnpm-lock.yaml", "yarn.lock"} else 250000
+            if not path.is_file() or path.stat().st_size > limit:
                 continue
             data = path.read_bytes()
             try:

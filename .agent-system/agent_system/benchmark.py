@@ -13,15 +13,19 @@ from .reports import write_json
 from .security import safe_relative
 from .validation import validate_plan
 from .workspace import Snapshot
+from .usage import summarize
 
 
 def benchmark(config: dict, root: Path, aliases: list[str], *, cloud=False, confirmed=False, tasks_path=None, load_model=False, manage_models=False, allow_test_execution=False, engine_factory=Engine, model_session_factory=None) -> dict:
-    if cloud and not confirmed:
+    if (cloud or "cloud" in aliases) and not confirmed:
         raise SafetyError("Benchmark Cloud exige confirmação explícita --confirm-cloud-benchmark; sem ela nenhuma chamada é feita.")
     if not aliases or len(aliases) != len(set(aliases)) or len(aliases) > 10:
         raise ConfigurationError("Selecione de 1 a 10 aliases distintos.")
     for alias in aliases:
-        select_model(config, alias)
+        if alias != "cloud":
+            select_model(config, alias)
+    if "cloud" in aliases and not cloud:
+        raise SafetyError("Comparar Coder Cloud exige --cloud-benchmark e revisão equivalente nos dois executores.")
     path = tasks_path or SYSTEM_DIR / config["benchmark"]["tasks_file"]
     try:
         tasks = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -62,7 +66,7 @@ def benchmark(config: dict, root: Path, aliases: list[str], *, cloud=False, conf
         for task, snapshot in validated_tasks:
           for alias in aliases:
             activation_error = None
-            if session:
+            if session and alias != "cloud":
                 try:
                     session.activate(select_model(config, alias))
                 except AgentError as exc:
@@ -70,7 +74,8 @@ def benchmark(config: dict, root: Path, aliases: list[str], *, cloud=False, conf
                 write_json(directory / "model-session.json", session.audit)
             # O mesmo snapshot e o mesmo plano são reutilizados em cópias NOVAS.
             engine = engine_factory(config, root, budget=budget)
-            result = engine.run(task["plan"]["task"], model_alias=alias, plan=json.loads(json.dumps(task["plan"])), snapshot=snapshot, local_only=not cloud, no_reviewer=not cloud, load_model=load_model and not manage_models, allow_test_execution=allow_test_execution, exclusive_model=config["benchmark"].get("require_exclusive_model", True), preflight_error=activation_error)
+            result = engine.run(task["plan"]["task"], model_alias=None if alias == "cloud" else alias, coder_backend="cloud" if alias == "cloud" else "local", confirm_cloud_coder=confirmed, plan=json.loads(json.dumps(task["plan"])), snapshot=snapshot, local_only=not cloud, no_reviewer=not cloud, load_model=load_model and not manage_models, allow_test_execution=allow_test_execution, exclusive_model=config["benchmark"].get("require_exclusive_model", True), preflight_error=activation_error)
+            result["comparison_metrics"] = {"usage": summarize(result["metrics"]["calls"]), "checks_passed": sum(c["status"] == "passed" for c in result["checks"]), "checks_pending": sum(c["status"] == "pending" for c in result["checks"]), "mandatory_open": sum(f.get("mandatory", False) and f.get("state") != "resolved" for f in result.get("review", {}).get("findings", []))}
             comparisons.append({"task": task["name"], "model_alias": alias, "result": result})
             write_json(directory / "benchmark.json", {"cloud": cloud, "cloud_calls": budget.used, "comparisons": comparisons})
     finally:
@@ -82,11 +87,18 @@ def benchmark(config: dict, root: Path, aliases: list[str], *, cloud=False, conf
         runs = [row["result"] for row in comparisons if row["model_alias"] == alias]
         passed = sum(r["status"] in {"completed", "local_verified"} for r in runs)
         summary.append({"model_alias": alias, "tasks": len(runs), "passed": passed, "success_rate": passed / len(runs), "cloud_approvals": sum(r["cloud_approved"] is True for r in runs)})
-    report = {"cloud": cloud, "cloud_calls": budget.used, "comparisons": comparisons, "summary": summary, "run_dir": str(directory), "conditions": "Mesmo snapshot, plano, checks e política de correções; contexto/timeout de cada alias registrado. GPU/RAM são uso total do sistema. Desempenho de inferência só é conhecido se fornecido pelo runtime."}
+        summary[-1]["budget_limited_tasks"] = sum(r.get("budget_blocked", False) or r["status"] == "budget_exceeded" for r in runs)
+        for environment in ["cloud", "local"]:
+            calls = [m for r in runs for m in r["metrics"]["calls"] if m.get("environment") == environment]
+            known = [m.get("total_tokens") for m in calls if type(m.get("total_tokens")) is int]
+            complete = all(m.get("usage_complete", False) and m.get("total_tokens") is not None for m in calls)
+            summary[-1][environment + "_recorded_tokens"] = sum(known) if known or not calls else None
+            summary[-1][environment + "_tokens_per_completed_task"] = sum(known) / passed if passed and complete else None
+    report = {"cloud": cloud, "cloud_calls": budget.used, "comparisons": comparisons, "summary": summary, "run_dir": str(directory), "comparison_complete": not any(s["budget_limited_tasks"] for s in summary), "conditions": "Mesmo snapshot, plano, checks e política de correções; contexto/timeout de cada alias registrado. OpenCode usa ferramentas; Coder Cloud recebe contexto selecionado e devolve arquivos JSON. Harnesses diferentes são variável da comparação. O orçamento Cloud global compartilhado pode interromper candidatos posteriores; isso não demonstra qualidade inferior. GPU/RAM são uso total do sistema. Sem inferência registrada, sem estimativa de economia financeira."}
     if session:
         report["model_session"] = session.audit
     write_json(directory / "benchmark.json", report)
-    lines = ["# Comparação de modelos locais", "", report["conditions"], "", "Sucesso local significa verificações configuradas aprovadas, sem aprovação Cloud.", "", "| Tarefa | Modelo | Estado | Tempo (s) | Correções | Checks | Reviewer Cloud | Tokens Cloud entrada/saída | Pico VRAM por GPU (MiB) |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines = ["# Comparação de Coders e modelos", "", report["conditions"], "", "Sucesso local significa verificações configuradas aprovadas, sem aprovação Cloud.", "", "| Tarefa | Modelo | Estado | Tempo (s) | Correções | Checks | Reviewer Cloud | Tokens Cloud entrada/saída | Pico VRAM por GPU (MiB) |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in comparisons:
         result = row["result"]
         cloud_calls = [m for m in result["metrics"]["calls"] if m["provider"] == "codex"]

@@ -21,6 +21,13 @@ def parser():
     cli.add_argument("--config", type=Path, help="Configuração JSON (independente do backend).")
     cli.add_argument("--root", type=Path, default=SYSTEM_DIR.parent, help="Raiz do repositório Git.")
     cli.add_argument("--model", help="Alias configurado do modelo local.")
+    cli.add_argument("--task-id", help="Identidade persistente da tarefa; compartilha orçamento entre tentativas.")
+    cli.add_argument("--coder", choices=["local", "cloud"], default="local", help="Executor do Coder; local é o padrão.")
+    cli.add_argument("--confirm-cloud-coder", action="store_true", help="Autorizar explicitamente inferência do Coder Cloud.")
+    cli.add_argument("--copy-workspace-dependencies", action="store_true", help="Copiar node_modules existentes para verificações descartáveis; sem links ou instalação.")
+    cli.add_argument("--max-cloud-tokens", type=int, help="Limite de tokens Cloud registrados, cache incluído e identificado.")
+    cli.add_argument("--max-total-tokens", type=int, help="Limite de tokens registrados em todos os ambientes.")
+    cli.add_argument("--total-timeout-seconds", type=int, help="Tempo acumulado máximo por tarefa.")
     mode = cli.add_mutually_exclusive_group()
     mode.add_argument("--hardware", action="store_true", help="Consultar GPUs/RAM sem inferência.")
     mode.add_argument("--status", action="store_true", help="Consultar CLIs, autenticação, modelos e execuções; sem inferência.")
@@ -38,6 +45,7 @@ def parser():
     cli.add_argument("--confirm-cloud-benchmark", action="store_true", help="Autorizar explicitamente consumo Cloud do benchmark.")
     cli.add_argument("--max-cloud-calls", type=int, help="Limite total de sessões Cloud, inclusive falhas.")
     cli.add_argument("--max-corrections", type=int, help="Máximo de tentativas locais de correção.")
+    cli.add_argument("--max-reviews", type=int, help="Limite acumulado de revisões Cloud por tarefa.")
     cli.add_argument("--load-model", action="store_true", help="Autorizar carregamento nativo lms; nunca descarrega modelos do usuário.")
     cli.add_argument("--manage-models", action="store_true", help="Benchmark: autorizar unload/load sequencial e restauração dos parâmetros suportados dos modelos iniciais.")
     cli.add_argument("--escalate-run", type=Path, help="Solicitar novo planejamento Cloud a partir de uma execução interrompida.")
@@ -69,13 +77,19 @@ def status(config, root, spec):
 def main(argv=None):
     cli = parser()
     args = cli.parse_args(argv)
+    planning_feedback = None
     try:
         config = load_config(args.config)
+        if args.copy_workspace_dependencies:
+            config["verification"]["copy_dependencies"] = True
         from .config import integer
-        for argument, name in ((args.max_cloud_calls, "max_cloud_calls"), (args.max_corrections, "max_corrections")):
+        for argument, name in ((args.max_cloud_calls, "max_cloud_calls"), (args.max_corrections, "max_corrections"), (args.max_reviews, "max_reviews")):
             if argument is not None:
                 config["limits"][name] = integer(argument, name, 0, 100)
         spec = select_model(config, args.model)
+        for value, name in ((args.max_cloud_tokens, "max_cloud_tokens"), (args.max_total_tokens, "max_total_tokens"), (args.total_timeout_seconds, "total_timeout_seconds")):
+            if value is not None:
+                config["limits"][name] = integer(value, name, 0 if "tokens" in name else 1, 10**12 if "tokens" in name else 86400)
         root = args.root.resolve()
         if not root.is_dir():
             raise AgentError("Raiz do repositório não existe.")
@@ -85,6 +99,10 @@ def main(argv=None):
             safe_relative(name)
         if args.local_only and args.plan_only:
             raise AgentError("--plan-only é Cloud; use --dry-run para validação sem consumo.")
+        if args.coder == "cloud" and args.local_only:
+            raise AgentError("Coder Cloud não pode ser combinado com --local-only.")
+        if args.confirm_cloud_coder and args.coder != "cloud":
+            raise AgentError("--confirm-cloud-coder exige --coder cloud.")
         if (args.cloud_benchmark or args.confirm_cloud_benchmark or args.models or args.tasks_file or args.manage_models) and not args.benchmark:
             raise AgentError("Opções de benchmark exigem --benchmark.")
         if args.confirm_cloud_escalation and not args.escalate_run:
@@ -98,9 +116,12 @@ def main(argv=None):
             if not path.is_relative_to((root / ".agent-system/runs").resolve()) or not path.is_dir():
                 raise AgentError("Escalone somente uma pasta de execução dentro de .agent-system/runs.")
             old = json.loads((path / "report.json").read_text(encoding="utf-8"))
-            if old.get("status") not in {"failed", "correction_limit", "validation_pending", "interrupted"}:
+            if old.get("status") not in {"failed", "correction_limit", "validation_pending", "interrupted", "no_progress", "budget_exceeded"}:
                 raise AgentError("Execução não possui impedimento que justifique escalonamento.")
-            args.task = "Replaneje a tarefa após impedimento, sem ampliar seu objetivo. Tarefa: " + old["task"] + "\nMotivo: " + str(old.get("error")) + "\nVerificações: " + json.dumps(old.get("checks", []), ensure_ascii=False)
+            if not old.get("task_id"):
+                raise AgentError("Execução antiga sem ledger: revise e migre o orçamento antes de escalonar.")
+            args.task, args.task_id = old["task"], old["task_id"]
+            planning_feedback = "Motivo: " + str(old.get("error")) + "\nVerificações: " + json.dumps(old.get("checks", []), ensure_ascii=False)
             args.plan_only = True
         if args.hardware:
             data = {"gpu": gpu_snapshot(), "ram": ram_snapshot()}
@@ -116,9 +137,9 @@ def main(argv=None):
             if not args.task:
                 cli.error("informe uma tarefa ou um modo como --status/--hardware/--dry-run")
             plan = json.loads(args.plan_file.read_text(encoding="utf-8-sig")) if args.plan_file else None
-            data = Engine(config, root).run(args.task, model_alias=args.model, local_only=args.local_only, no_reviewer=args.no_reviewer, plan_only=args.plan_only, plan=plan, files=args.file, context_files=args.context_file, load_model=args.load_model, allow_test_execution=args.allow_test_execution)
+            data = Engine(config, root).run(args.task, model_alias=args.model, local_only=args.local_only, no_reviewer=args.no_reviewer, plan_only=args.plan_only, plan=plan, files=args.file, context_files=args.context_file, load_model=args.load_model, allow_test_execution=args.allow_test_execution, task_id=args.task_id, coder_backend=args.coder, confirm_cloud_coder=args.confirm_cloud_coder, planning_feedback=planning_feedback)
         print(json.dumps(data, ensure_ascii=False, indent=2))
-        if data.get("status") and data["status"] not in {"completed", "local_verified", "planned"}:
+        if data.get("status") and data["status"] not in {"completed", "local_verified", "checks_verified", "planned"}:
             return 2
         if args.benchmark and any(row["result"]["status"] not in {"completed", "local_verified"} for row in data["comparisons"]):
             return 2

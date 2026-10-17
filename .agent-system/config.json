@@ -17,12 +17,15 @@
   "limits": {
     "max_cloud_calls": 4,
     "max_corrections": 2,
+    "max_reviews": 3,
+    "max_cloud_tokens": 250000,
+    "max_total_tokens": null,
     "max_steps": 12,
     "max_context_chars": 24000,
     "total_timeout_seconds": 3600
   },
   "checks": ["python-syntax", "diff-check"],
-  "verification": {"timeout_seconds": 120},
+  "verification": {"timeout_seconds": 120, "copy_dependencies": false, "workspaces": [{"path": "mobile/busguard", "scripts": ["test", "typecheck"]}]},
   "monitoring": {"gpu": true, "ram": true, "interval_seconds": 1.0},
   "benchmark": {"tasks_file": "benchmarks/tasks.json", "require_exclusive_model": true}
 }

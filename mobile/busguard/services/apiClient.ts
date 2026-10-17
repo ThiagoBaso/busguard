@@ -8,11 +8,25 @@ const API_BASE_URL = getApiBaseUrl();
 const TOKEN_STORAGE_KEY = 'busguard.accessToken';
 
 let accessToken: string | null = null;
+let sessionVersion = 0;
+let storageQueue: Promise<void> = Promise.resolve();
 const sessionExpiredListeners = new Set<() => void>();
+
+export class SessionCancelledError extends Error {
+  constructor() { super('Operação de sessão substituída.'); }
+}
 
 export class ApiError extends Error {
   constructor(public readonly status: number) {
     super(`API error ${status}`);
+  }
+}
+
+export class ApiTransportError extends Error {
+  constructor(public readonly kind: 'network' | 'timeout' | 'cancelled') {
+    super(kind === 'timeout' ? 'Tempo limite da requisição excedido.'
+      : kind === 'cancelled' ? 'Requisição cancelada.' : 'Falha de conexão com o serviço.');
+    this.name = kind === 'network' ? 'ApiTransportError' : 'AbortError';
   }
 }
 
@@ -31,50 +45,53 @@ export type CurrentUser = {
   role: 'admin' | 'driver' | 'responsible' | 'supervisor';
 };
 
-async function setAccessToken(token: string | null) {
-  accessToken = token;
-
-  if (Platform.OS === 'web') {
-    // Descarta tokens persistidos por versões anteriores. A sessão web fica só em memória.
-    clearLegacyWebToken();
-    return;
-  }
-
-  if (token) {
-    await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, token);
-    return;
-  }
-
-  await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+function persistToken(token: string | null): Promise<void> {
+  const write = storageQueue.catch(() => undefined).then(async () => {
+    if (Platform.OS === 'web') { clearLegacyWebToken(); return; }
+    if (token) await SecureStore.setItemAsync(TOKEN_STORAGE_KEY, token);
+    else await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
+  });
+  storageQueue = write;
+  return write;
 }
 
 export async function login(email: string, password: string): Promise<CurrentUser> {
-  const response = await fetchWithTimeout(`${API_BASE_URL}/auth/login`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!response.ok) {
-    throw new ApiError(response.status);
-  }
-
-  const data = (await response.json()) as LoginResponse;
-  await setAccessToken(data.access_token);
-
+  const version = ++sessionVersion;
+  accessToken = null;
   try {
-    return await getCurrentUser();
+    const data = await fetchWithTimeout<LoginResponse>(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password }),
+    }, async response => {
+      if (version !== sessionVersion) throw new SessionCancelledError();
+      if (!response.ok) throw new ApiError(response.status);
+      return response.json() as Promise<LoginResponse>;
+    });
+    if (version !== sessionVersion) throw new SessionCancelledError();
+    if (typeof data.access_token !== 'string' || !data.access_token.trim()) throw new Error('Resposta de autenticação inválida.');
+    accessToken = data.access_token;
+    await persistToken(data.access_token);
+    if (version !== sessionVersion) throw new SessionCancelledError();
+    const user = await getCurrentUser();
+    if (version !== sessionVersion) throw new SessionCancelledError();
+    return user;
   } catch (error) {
-    await setAccessToken(null);
+    if (version === sessionVersion) {
+      accessToken = null;
+      await persistToken(null);
+    }
     throw error;
   }
 }
 
 export async function restoreSession(): Promise<CurrentUser | null> {
+  const version = sessionVersion;
   if (!accessToken) {
-    accessToken = await getStoredAccessToken();
+    await storageQueue.catch(() => undefined);
+    const stored = await getStoredAccessToken();
+    if (version !== sessionVersion) throw new SessionCancelledError();
+    accessToken = stored;
   }
 
   if (!accessToken) {
@@ -82,7 +99,9 @@ export async function restoreSession(): Promise<CurrentUser | null> {
   }
 
   try {
-    return await getCurrentUser();
+    const user = await getCurrentUser();
+    if (version !== sessionVersion) throw new SessionCancelledError();
+    return user;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       return null;
@@ -92,49 +111,104 @@ export async function restoreSession(): Promise<CurrentUser | null> {
 }
 
 export async function logout() {
-  await setAccessToken(null);
+  sessionVersion += 1;
+  accessToken = null;
+  await persistToken(null);
 }
 
 export async function getCurrentUser(): Promise<CurrentUser> {
-  return apiFetch<CurrentUser>('/auth/me');
+  const user = await apiFetch<CurrentUser>('/auth/me');
+  if (!user || !Number.isInteger(user.id) || user.id <= 0 || !['admin', 'driver', 'responsible', 'supervisor'].includes(user.role)) {
+    throw new Error('Perfil de sessão inválido.');
+  }
+  return user;
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const requestToken = accessToken;
-  const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
+  const requestVersion = sessionVersion;
+  return fetchWithTimeout<T>(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {}),
       ...options.headers,
     },
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 && requestToken && accessToken === requestToken) {
-      await setAccessToken(null);
-      sessionExpiredListeners.forEach((listener) => listener());
+  }, async response => {
+    if (!response.ok) {
+      if (response.status === 401 && requestToken && accessToken === requestToken && sessionVersion === requestVersion) {
+        sessionVersion += 1;
+        accessToken = null;
+        // Notifica antes de esperar o armazenamento: não expira um login posterior.
+        sessionExpiredListeners.forEach((listener) => listener());
+        void persistToken(null).catch(() => undefined);
+      }
+      throw new ApiError(response.status);
     }
-    throw new ApiError(response.status);
-  }
 
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return response.json() as Promise<T>;
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
+  });
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit) {
+export function getApiErrorMessage(error: unknown, context = 'conectar ao serviço') {
+  if (error instanceof ApiTransportError) {
+    if (error.kind === 'timeout') return 'A solicitação excedeu o tempo limite. Tente novamente.';
+    if (error.kind === 'cancelled') return 'Solicitação cancelada.';
+    return `Não foi possível ${context}. Verifique sua conexão e tente novamente.`;
+  }
+  if (error instanceof ApiError) {
+    if (error.status === 401) return 'E-mail ou senha inválidos, ou sua sessão terminou.';
+    if (error.status === 403) return 'Sua conta não tem permissão para esta operação.';
+    if (error.status === 422) return 'Confira os dados informados e tente novamente.';
+    if (error.status === 429) return 'Muitas tentativas. Aguarde um pouco antes de tentar novamente.';
+    if (error.status >= 500) return 'O serviço está indisponível no momento. Tente novamente em instantes.';
+  }
+  return `Não foi possível ${context}. Tente novamente.`;
+}
+
+async function fetchWithTimeout<T>(
+  url: string,
+  options: RequestInit,
+  consumeResponse: (response: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
-  const onAbort = () => controller.abort();
+  let abortError = new ApiTransportError('cancelled');
+  let rejectAbort: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = () => reject(abortError);
+  });
+  controller.signal.addEventListener('abort', rejectAbort);
+  const abort = (kind: 'timeout' | 'cancelled') => {
+    if (controller.signal.aborted) return;
+    abortError = new ApiTransportError(kind);
+    controller.abort();
+  };
+  const onAbort = () => abort('cancelled');
   options.signal?.addEventListener('abort', onAbort);
-  if (options.signal?.aborted) controller.abort();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  if (options.signal?.aborted) onAbort();
+  const timeout = setTimeout(() => abort('timeout'), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const request = (async () => {
+      if (controller.signal.aborted) throw abortError;
+      let response: Response;
+      try {
+        response = await fetch(url, { ...options, signal: controller.signal });
+      } catch (error) {
+        if (controller.signal.aborted) throw abortError;
+        if (error instanceof TypeError) throw new ApiTransportError('network');
+        throw error;
+      }
+      if (controller.signal.aborted) throw abortError;
+      return consumeResponse(response);
+    })();
+    // Inclui o consumo do corpo no limite, mesmo em plataformas cujo json()
+    // não rejeita automaticamente ao receber o cancelamento do fetch.
+    return await Promise.race([request, aborted]);
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', onAbort);
+    controller.signal.removeEventListener('abort', rejectAbort);
   }
 }
 

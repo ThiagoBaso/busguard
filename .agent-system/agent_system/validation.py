@@ -3,7 +3,7 @@ from __future__ import annotations
 from .errors import SafetyError
 from .security import safe_relative
 
-CHECKS = {"python-syntax", "diff-check", "unit-tests"}
+CHECKS = {"python-syntax", "diff-check", "unit-tests", "workspace-scripts"}
 
 
 def obj(value, required: set[str], name: str):

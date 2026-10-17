@@ -40,6 +40,11 @@ def load_config(path: Path | None = None) -> dict:
             raise ConfigurationError("Somente o provider local lmstudio é permitido.")
         for name in ("max_cloud_calls", "max_corrections"):
             integer(config["limits"][name], name, 0, 100)
+        for name in ("max_cloud_tokens", "max_total_tokens"):
+            if config["limits"].get(name) is not None:
+                integer(config["limits"][name], name, 0, 10**12)
+        if "max_reviews" in config["limits"]:
+            integer(config["limits"]["max_reviews"], "max_reviews", 0, 100)
         integer(config["limits"]["max_steps"], "max_steps", 1, 100)
         integer(config["limits"]["max_context_chars"], "max_context_chars", 1000, 200000)
         integer(config["limits"]["total_timeout_seconds"], "total_timeout_seconds")
@@ -49,11 +54,16 @@ def load_config(path: Path | None = None) -> dict:
         for alias in local["models"]:
             select_model(config, alias)
         select_model(config, local["default_model"])
-        if not isinstance(config["checks"], list) or not all(c in {"python-syntax", "diff-check", "unit-tests"} for c in config["checks"]):
-            raise ConfigurationError("Checks permitidos: python-syntax, diff-check e unit-tests.")
+        from .validation import CHECKS
+        if not isinstance(config["checks"], list) or not all(c in CHECKS for c in config["checks"]):
+            raise ConfigurationError("Checks permitidos: " + ", ".join(sorted(CHECKS)))
         if not config["checks"]:
             raise ConfigurationError("Configure pelo menos uma verificação.")
         integer(config["verification"]["timeout_seconds"], "verification.timeout_seconds")
+        from .checks import validate_workspaces
+        validate_workspaces(config["verification"].get("workspaces", []))
+        if type(config["verification"].get("copy_dependencies", False)) is not bool:
+            raise ConfigurationError("copy_dependencies deve ser booleano.")
         interval = config["monitoring"]["interval_seconds"]
         if type(interval) not in {int, float} or not 0.1 <= interval <= 60:
             raise ConfigurationError("Intervalo de monitoramento deve estar entre 0.1 e 60 segundos.")

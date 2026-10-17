@@ -1,0 +1,3 @@
+python .agent-system/orchestrator.py "Criar endpoint para listar viagens de um motorista, incluindo testes"
+
+python .agent-system/orchestrator.py --cloud-model gpt-6.1-sol --model qwen14b "Implementar consulta de viagens"

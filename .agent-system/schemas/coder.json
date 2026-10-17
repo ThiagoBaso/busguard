@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string"},
+          "content": {"type": ["string", "null"]}
+        },
+        "required": ["path", "content"]
+      }
+    }
+  },
+  "required": ["files"]
+}

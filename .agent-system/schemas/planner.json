@@ -51,9 +51,11 @@
               "enum": [
                 "python-syntax",
                 "diff-check",
-                "unit-tests"
+                "unit-tests",
+                "workspace-scripts"
               ]
-            }
+            },
+            "minItems": 1
           }
         },
         "required": [

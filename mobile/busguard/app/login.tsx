@@ -1,207 +1,123 @@
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
-import { SymbolView } from 'expo-symbols';
+import { useEffect, useRef, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Text, View } from '@/components/Themed';
-import { ApiError } from '@/services/apiClient';
+import { AppIcon, Brand } from '@/components/Brand';
+import { AppText, Button, Notice } from '@/components/ui';
+import { useAppTheme } from '@/constants/theme';
+import { ApiError, getApiErrorMessage } from '@/services/apiClient';
 import { useSession } from '@/services/session';
 
 export default function LoginScreen() {
   const { login } = useSession();
-  // Contas de demonstração para testes locais:
-  // admin: email admin@transportescolar.com | senha Busguard@123
-  // driver: email joao.pereira@transportescolar.com | senha Busguard@123
-  // responsible: email maria.fernandes@email.com | senha Busguard@123
+  const theme = useAppTheme();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ profile?: string | string[] }>();
+  const selectedProfile = Array.isArray(params.profile) ? params.profile[0] : params.profile;
+  const responsible = selectedProfile === 'responsible';
   const [email, setEmail] = useState(__DEV__ ? 'joao.pereira@transportescolar.com' : '');
   const [password, setPassword] = useState(__DEV__ ? 'Busguard@123' : '');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  const passwordInput = useRef<TextInput>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   async function handleLogin() {
-    setError(null);
+    if (busy.current) return;
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) {
+      setError('Informe seu e-mail e sua senha para continuar.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError('Informe um e-mail válido.');
+      return;
+    }
+    busy.current = true;
     setLoading(true);
-
+    setError(null);
     try {
-      await login(email, password);
+      await login(normalizedEmail, password);
     } catch (caught) {
-      setError(caught instanceof ApiError && caught.status === 401
-        ? 'E-mail ou senha inválidos.'
-        : 'Não foi possível conectar. Tente novamente.');
+      if (mounted.current) {
+        setError(caught instanceof ApiError && caught.status === 401
+          ? 'E-mail ou senha inválidos. Confira seus dados e tente novamente.'
+          : getApiErrorMessage(caught, 'entrar na sua conta'));
+      }
     } finally {
-      setLoading(false);
+      busy.current = false;
+      if (mounted.current) setLoading(false);
     }
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={24}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}>
-        <View style={styles.card}>
-          <View style={styles.logoCircle}>
-            <SymbolView
-              name={{ android: 'directions_bus', web: 'directions_bus' }}
-              size={34}
-              tintColor="#0f766e"
-              fallback={<Text style={styles.logoFallback}>Bus</Text>}
-            />
-          </View>
-          <Text style={styles.title}>BusGuard</Text>
-          <Text style={styles.subtitle}>Acompanhe rotas escolares com seguranca.</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder="E-mail"
-            placeholderTextColor="#94a3b8"
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <View style={styles.passwordField}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="Senha"
-              placeholderTextColor="#94a3b8"
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoComplete="password"
-              textContentType="password"
-              value={password}
-              onChangeText={setPassword}
-            />
-            <Pressable
-              style={styles.passwordToggle}
-              accessibilityRole="button"
-              accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-              onPress={() => setShowPassword((current) => !current)}>
-              <SymbolView
-                name={{ android: showPassword ? 'visibility_off' : 'visibility', web: showPassword ? 'visibility_off' : 'visibility' }}
-                size={22}
-                tintColor="#64748b"
-                fallback={<Text style={styles.passwordToggleFallback}>{showPassword ? 'Ocultar' : 'Ver'}</Text>}
-              />
+    <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]}>
+      <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.content}>
+            <View style={styles.brand}><Brand large /></View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Voltar e alterar perfil" disabled={loading}
+              onPress={() => router.replace('/welcome')} style={({ pressed }) => [styles.back, { opacity: pressed || loading ? 0.6 : 1 }]}>
+              <AppText muted>{'\u2190'} Alterar perfil</AppText>
             </Pressable>
+            <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <View style={[styles.icon, { backgroundColor: theme.primarySoft }]}><AppIcon name={responsible ? 'person' : 'bus'} size={26} color={theme.primary} /></View>
+              <View style={styles.heading}>
+                <AppText accessibilityRole="header" style={styles.title}>Bem-vindo de volta!</AppText>
+                <AppText muted>{responsible ? 'Acesso do responsável' : 'Acesso do motorista'}</AppText>
+              </View>
+              <View style={styles.field}>
+                <AppText variant="label">E-MAIL</AppText>
+                <TextInput accessibilityLabel="E-mail" placeholder="Seu e-mail" placeholderTextColor={theme.muted}
+                  autoCapitalize="none" autoCorrect={false} autoComplete="email" textContentType="emailAddress" keyboardType="email-address"
+                  value={email} onChangeText={(value) => { setEmail(value); setError(null); }} editable={!loading}
+                  returnKeyType="next" onSubmitEditing={() => passwordInput.current?.focus()}
+                  style={[styles.input, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]} />
+              </View>
+              <View style={styles.field}>
+                <AppText variant="label">SENHA</AppText>
+                <View style={[styles.passwordField, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                  <TextInput ref={passwordInput} accessibilityLabel="Senha" placeholder="Sua senha" placeholderTextColor={theme.muted}
+                    secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} autoComplete="password" textContentType="password"
+                    value={password} onChangeText={(value) => { setPassword(value); setError(null); }} editable={!loading}
+                    returnKeyType="go" onSubmitEditing={() => void handleLogin()} style={[styles.passwordInput, { color: theme.text }]} />
+                  <Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    accessibilityState={{ disabled: loading }} disabled={loading} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}>
+                    <AppText style={{ fontSize: 12, fontWeight: '700', color: theme.primary }}>{showPassword ? 'Ocultar' : 'Mostrar'}</AppText>
+                  </Pressable>
+                </View>
+              </View>
+              {error ? <Notice tone="error" message={error} /> : null}
+              <Button label={loading ? 'Entrando...' : 'Entrar na minha conta'} loading={loading} onPress={() => void handleLogin()} />
+              <AppText muted style={styles.help}>Precisa de acesso ou esqueceu a senha? Procure a administração do transporte escolar.</AppText>
+            </View>
+            <View style={styles.footer}><AppIcon name="shield" size={17} color={theme.muted} /><AppText muted style={styles.footerText}>Seu acesso é pessoal. Não compartilhe sua senha.</AppText></View>
           </View>
-
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          <Pressable style={[styles.loginButton, loading && styles.loginButtonDisabled]} onPress={handleLogin} disabled={loading}>
-            <Text style={styles.loginButtonText}>{loading ? 'Entrando...' : 'Entrar'}</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: '#eef6f5',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    padding: 24,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 3,
-  },
-  logoCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#d1fae5',
-    marginBottom: 18,
-  },
-  logoFallback: {
-    color: '#0f766e',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  title: {
-    color: '#0f172a',
-    fontSize: 30,
-    fontWeight: '800',
-  },
-  subtitle: {
-    color: '#64748b',
-    fontSize: 15,
-    marginTop: 6,
-    marginBottom: 22,
-  },
-  input: {
-    height: 52,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
-    color: '#0f172a',
-    paddingHorizontal: 16,
-    fontSize: 15,
-    marginBottom: 12,
-  },
-  passwordField: {
-    height: 52,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f1f5f9',
-    marginBottom: 12,
-  },
-  passwordInput: {
-    flex: 1,
-    height: 52,
-    color: '#0f172a',
-    paddingLeft: 16,
-    paddingRight: 8,
-    fontSize: 15,
-  },
-  passwordToggle: {
-    width: 52,
-    height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  passwordToggleFallback: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  loginButton: {
-    height: 52,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f8bd16',
-    marginTop: 6,
-  },
-  loginButtonDisabled: {
-    opacity: 0.7,
-  },
-  error: {
-    color: '#dc2626',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  loginButtonText: {
-    color: '#1f2937',
-    fontSize: 16,
-    fontWeight: '800',
-  },
+  screen: { flex: 1 }, scroll: { flexGrow: 1, justifyContent: 'center', paddingVertical: 24 },
+  content: { width: '100%', maxWidth: 480, alignSelf: 'center', paddingHorizontal: 20, gap: 14 },
+  brand: { alignItems: 'center', paddingBottom: 12 }, back: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  card: { borderWidth: 1, borderRadius: 18, padding: 22, gap: 19 }, heading: { gap: 6 },
+  icon: { width: 48, height: 48, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: 25, lineHeight: 32, fontWeight: '800', letterSpacing: -0.7 }, field: { gap: 7 },
+  input: { minHeight: 50, borderWidth: 1, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
+  passwordField: { minHeight: 50, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 11 },
+  passwordInput: { flex: 1, minWidth: 0, minHeight: 50, paddingLeft: 14, paddingRight: 7, paddingVertical: 12, fontSize: 15 },
+  passwordToggle: { minHeight: 48, minWidth: 66, paddingHorizontal: 10, justifyContent: 'center', alignItems: 'center' },
+  help: { fontSize: 12, lineHeight: 19, textAlign: 'center' },
+  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, footerText: { fontSize: 11, lineHeight: 17, textAlign: 'center' },
 });

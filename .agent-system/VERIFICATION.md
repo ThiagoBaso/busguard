@@ -54,3 +54,22 @@ O **ciclo completo automatizado** Planner → Coder → checks → Reviewer, inc
 Não foi executada comparação real entre 14B e 35B nem verificação de offload/placement por camada. Quantização, contexto, processos concorrentes e placement nativo podem mudar tempo e memória. Recuperação gerenciada restaura apenas parâmetros suportados; use o inventário/auditoria para recuperar configurações extras manualmente.
 
 A infraestrutura não altera arquivos de backend, mobile, SQL ou Docker. Os arquivos preexistentes `opencode.json` e `prompts/coder.txt` são preservados. A revisão independente está em [REVIEW.md](../REVIEW.md).
+
+## Otimizações — 17 de outubro de 2026
+
+As quatro fases posteriores à auditoria estão descritas em
+[OPTIMIZATION_RESULTS.md](OPTIMIZATION_RESULTS.md), com limitações e fontes.
+O smoke mínimo local terminou sem compactações: 4102 tokens completos recuperados,
+32,46 s de subprocesso. O prompt difere do smoke antigo; não é benchmark equivalente.
+Uma repetição anterior atingiu timeout e foi preservada como falha.
+
+No fechamento, **89 testes automatizados da infraestrutura passaram**. Os 26 testes
+mobile e a checagem TypeScript também passaram **em cópia isolada**, com cópia
+temporária das dependências, em 49,00 s incluindo preparação e limpeza.
+Os adaptadores novos e a comparação Cloud/Local foram testados com mocks.
+Nenhuma nova inferência Cloud de integração ou benchmark foi executada.
+
+O smoke final pelo Engine atualizado concluiu como `local_verified`: **4852
+tokens**, **zero compactações**, **20,01 s totais** e zero chamadas Cloud. O
+relatório e o ledger foram conferidos. As revisões locais finais dos dois
+escopos estão em [OPTIMIZATION_REVIEW.md](OPTIMIZATION_REVIEW.md).

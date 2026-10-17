@@ -4,6 +4,7 @@ import dataclasses
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -11,7 +12,13 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from .config import ModelSpec
 from .errors import ProviderError, SafetyError
 from .process import clean_environment, executable, run_process
-from .security import cloud_text, redact, safe_relative
+from .security import cloud_text, redact, safe_relative, contained
+from .usage import normalized, opencode_delta, opencode_snapshot
+
+
+def budget_timeout(provider, maximum):
+    remaining = getattr(provider, "remaining", None)
+    return min(maximum, remaining()) if callable(remaining) else maximum
 
 
 def events(text: str) -> list[dict]:
@@ -67,7 +74,7 @@ class LMStudio:
 
     def request(self, endpoint: str) -> dict:
         try:
-            with self.opener(Request(endpoint, headers={"Accept": "application/json"}), timeout=5) as response:
+            with self.opener(Request(endpoint, headers={"Accept": "application/json"}), timeout=budget_timeout(self, 5)) as response:
                 if response.geturl().split("/", 3)[:3] != endpoint.split("/", 3)[:3]:
                     raise ProviderError("LM Studio redirecionou para um host externo; conexão bloqueada.")
                 data = response.read(2_000_001)
@@ -132,7 +139,7 @@ class LMStudio:
                 args += ["--gpu", "off"]
             elif gpu.get("load_mode") == "bionic-auto":
                 args += ["--auto"]
-            self.runner(args, cwd=Path.cwd(), timeout=spec.timeout_seconds)
+            self.runner(args, cwd=Path.cwd(), timeout=budget_timeout(self, spec.timeout_seconds))
             return self.ensure_model(spec, load=False)
         instance = next((i for i in model["instances"] if i.get("id") == spec.id), None) or next(iter(model["instances"]), None)
         if instance:
@@ -151,12 +158,12 @@ class CodexCLI:
 
     def probe(self, cwd: Path) -> dict:
         exe = executable(self.config["executable"])
-        version = self.runner([exe, "--version"], cwd=cwd, timeout=20).stdout.strip()
-        help_text = self.runner([exe, "exec", "--help"], cwd=cwd, timeout=20).stdout
+        version = self.runner([exe, "--version"], cwd=cwd, timeout=budget_timeout(self, 20)).stdout.strip()
+        help_text = self.runner([exe, "exec", "--help"], cwd=cwd, timeout=budget_timeout(self, 20)).stdout
         needed = ("--json", "--output-schema", "--output-last-message", "--sandbox", "--ignore-user-config", "--ephemeral")
         if any(flag not in help_text for flag in needed):
             raise ProviderError("Codex CLI incompatível: faltam flags de execução segura. Consulte exec --help.")
-        features = self.runner([exe, "features", "list"], cwd=cwd, timeout=20).stdout
+        features = self.runner([exe, "features", "list"], cwd=cwd, timeout=budget_timeout(self, 20)).stdout
         known = {line.split()[0] for line in features.splitlines() if line.split()}
         if not (set(self.DISABLED) | {"skip_host_skill_discovery"}) <= known:
             raise ProviderError("Codex CLI não expõe as opções necessárias para desativar ferramentas; atualize/revise o adaptador.")
@@ -164,7 +171,7 @@ class CodexCLI:
         if "CODEX_HOME" in os.environ:
             auth_env["CODEX_HOME"] = os.environ["CODEX_HOME"]
         try:
-            auth = self.runner([exe, "login", "status"], cwd=cwd, timeout=20, env=auth_env)
+            auth = self.runner([exe, "login", "status"], cwd=cwd, timeout=budget_timeout(self, 20), env=auth_env)
         except ProviderError as exc:
             if "not logged" in str(exc).lower():
                 raise ProviderError("Codex CLI sem login. Execute codex login no seu terminal; nenhuma chave de API adicional é exigida.") from exc
@@ -174,6 +181,7 @@ class CodexCLI:
         return {"version": version, "authenticated": True}
 
     def invoke(self, role: str, prompt: str, schema: Path, directory: Path, *, timeout: float | None = None) -> tuple[dict, dict]:
+        self.last_metrics = None
         directory.mkdir(parents=True, exist_ok=True)
         (directory / ".agent-context-root").touch()
         output = directory / "response.json"
@@ -189,13 +197,20 @@ class CodexCLI:
         try:
             process = self.runner(args, cwd=directory, timeout=timeout or self.config["timeout_seconds"], input_text=prompt, env=env)
             stream = events(process.stdout)
+            self.last_metrics = normalized({**usage_metrics(stream, process.elapsed_seconds, "codex"), "model": self.config.get("model"), "source": "codex.events"})
             if any(e.get("type") in {"error", "turn.failed"} for e in stream):
+                self.last_metrics["usage_complete"] = False
                 raise ProviderError("Codex informou falha na sessão. Nenhuma aprovação registrada.")
             if any((e.get("item") or {}).get("type") in {"command_execution", "mcp_tool_call", "web_search"} for e in stream):
                 raise SafetyError("Codex usou ferramenta fora do contrato sem ferramentas; resultado rejeitado.")
             response = output.read_text(encoding="utf-8-sig")
             cloud_text(response, 200000)
-            return json.loads(response), usage_metrics(stream, process.elapsed_seconds, "codex")
+            return json.loads(response), self.last_metrics
+        except ProviderError as exc:
+            if exc.process:
+                self.last_metrics = normalized({**usage_metrics(events(exc.process.stdout), exc.process.elapsed_seconds, "codex"), "usage_complete": False, "model": self.config.get("model"), "source": "codex.partial_events"})
+            exc.metrics = self.last_metrics
+            raise
         except (OSError, ValueError) as exc:
             raise ProviderError(f"Resposta {role} inválida: {exc}") from exc
         finally:
@@ -205,6 +220,19 @@ class CodexCLI:
 class OpenCodeCLI:
     def __init__(self, config: dict, local_config: dict, *, runner=run_process):
         self.config, self.local_config, self.runner = config, local_config, runner
+
+    def compaction_policy(self, spec: ModelSpec) -> dict:
+        # OpenCode 2.0.16 uses buffer=20000 by default, larger than an 8K window.
+        # Keep automatic overflow recovery, with a positive primary prompt budget.
+        settings = self.local_config.get("compaction", {})
+        buffer = settings.get("buffer", min(2048, spec.context_length // 8))
+        keep = settings.get("keep_tokens", min(2048, spec.context_length // 8))
+        if any(type(v) is not int or v < 0 for v in (buffer, keep)):
+            raise ProviderError("Buffer e retenção de compactação devem ser inteiros não negativos.")
+        ceiling = spec.context_length - max(spec.output_tokens, buffer)
+        if ceiling < 512 or keep >= ceiling:
+            raise ProviderError("Política de compactação incompatível com contexto/saída do modelo.")
+        return {"auto": True, "buffer": buffer, "keep": {"tokens": keep}}
 
     def environment(self, directory: Path, spec: ModelSpec, allowed: list[str], readable: list[str]) -> dict:
         env = clean_environment()
@@ -226,15 +254,16 @@ class OpenCodeCLI:
             read[name] = "allow"
         permissions = {"*": "deny", "read": read, "edit": edit, "glob": "allow", "grep": "allow", "shell": "deny", "bash": "deny", "external_directory": "deny", "subagent": "deny", "task": "deny", "webfetch": "deny", "websearch": "deny", "question": "deny", "skill": "deny", "lsp": "deny"}
         configuration = {"model": "lmstudio/" + spec.id, "small_model": "lmstudio/" + spec.id, "default_agent": "busguard-coder", "enabled_providers": ["lmstudio"], "provider": {"lmstudio": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": self.local_config["base_url"], "timeout": spec.timeout_seconds * 1000}, "models": {spec.id: {"name": spec.id, "limit": {"context": spec.context_length, "output": spec.output_tokens}}}}}, "permission": {"*": "deny"}, "agent": {"busguard-coder": {"mode": "primary", "steps": 12, "permission": permissions}}, "snapshot": False, "plugin": [], "mcp": {}, "formatter": False, "lsp": False, "autoupdate": False, "share": "disabled"}
+        configuration["compaction"] = self.compaction_policy(spec)
         env["OPENCODE_CONFIG_CONTENT"] = json.dumps(configuration)
-        env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps({"plugins": [], "session": {"permissions": "prompt"}})
+        env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps({"plugins": [], "session": {"permissions": "prompt"}, "compaction": self.compaction_policy(spec)})
         return env
 
     def probe(self, directory: Path, spec: ModelSpec) -> dict:
         exe = executable(self.config["executable"])
         env = self.environment(directory, spec, [], [])
-        version = self.runner([exe, "--version"], cwd=directory, timeout=20, env=env).stdout.strip()
-        help_text = self.runner([exe, "run", "--help"], cwd=directory, timeout=20, env=env).stdout
+        version = self.runner([exe, "--version"], cwd=directory, timeout=budget_timeout(self, 20), env=env).stdout.strip()
+        help_text = self.runner([exe, "run", "--help"], cwd=directory, timeout=budget_timeout(self, 20), env=env).stdout
         if any(flag not in help_text for flag in ("--standalone", "--format", "--model", "--agent")):
             raise ProviderError("OpenCode incompatível: este adaptador exige run --standalone --format json --model --agent.")
         version_match = re.fullmatch(r"(?:opencode\s+v?)?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?", version, re.IGNORECASE)
@@ -243,10 +272,25 @@ class OpenCodeCLI:
         return {"version": ".".join(version_match.groups()), "version_raw": version, "standalone": True}
 
     def invoke(self, prompt: str, workspace: Path, spec: ModelSpec, allowed: list[str], readable: list[str], directory: Path, *, timeout: float | None = None) -> dict:
+        self.last_metrics = None
+        before = opencode_snapshot(directory)
+        unknown_baseline = before is None and (directory / "opencode/data/opencode/opencode.db").exists()
         env = self.environment(directory, spec, allowed, readable)
         args = [executable(self.config["executable"]), "run", "--standalone", "--format", "json", "--model", "lmstudio/" + spec.id, "--agent", "busguard-coder"]
-        process = self.runner(args, cwd=workspace, timeout=timeout or spec.timeout_seconds, input_text=prompt, env=env)
+        try:
+            process = self.runner(args, cwd=workspace, timeout=timeout or spec.timeout_seconds, input_text=prompt, env=env)
+        except ProviderError as exc:
+            elapsed = exc.process.elapsed_seconds if exc.process else 0
+            self.last_metrics = None if unknown_baseline else opencode_delta(before, opencode_snapshot(directory), elapsed)
+            if self.last_metrics is None:
+                self.last_metrics = normalized(usage_metrics(events(exc.process.stdout) if exc.process else [], elapsed, "opencode"))
+            self.last_metrics["usage_complete"] = False
+            exc.metrics = self.last_metrics
+            raise
         stream = events(process.stdout)
+        fallback = usage_metrics(stream, process.elapsed_seconds, "opencode")
+        self.last_metrics = (None if unknown_baseline else opencode_delta(before, opencode_snapshot(directory), process.elapsed_seconds)) or normalized({**fallback, "usage_complete": False, "source": "opencode.step_finish_partial"})
+        self.last_metrics.update({k: fallback[k] for k in ("tool_calls", "tool_errors")})
         if not stream:
             raise ProviderError("OpenCode não retornou eventos JSON; resultado não verificável.")
         if any(e.get("type") == "error" for e in stream):
@@ -254,4 +298,64 @@ class OpenCodeCLI:
             if any(marker in message.lower() for marker in ("out of memory", "cuda oom", "not enough memory")):
                 raise ProviderError("Falta de memória no OpenCode/LM Studio: " + message[:1500])
             raise ProviderError("OpenCode informou erro: " + message[:1500])
-        return usage_metrics(stream, process.elapsed_seconds, "opencode")
+        return self.last_metrics
+
+
+class CloudCoder:
+    """Cloud inference proposes structured file contents; only the coordinator writes.
+
+    Uses the existing tool-free Codex adapter, not unrestricted shell/write tools.
+    This differs from OpenCode's interactive harness and is reported in benchmarks.
+    """
+    def __init__(self, config, max_context_chars, *, cloud=None):
+        self.config = config
+        self.cloud = cloud or CodexCLI(config)
+        self.max_context_chars = max_context_chars
+        self.last_metrics = None
+
+    def probe(self, directory, spec):
+        self.cloud.remaining = getattr(self, "remaining", None)
+        return {**self.cloud.probe(directory), "harness": "codex-structured-files", "model": self.config.get("model")}
+
+    def invoke(self, prompt, workspace, spec, allowed, readable, directory, *, timeout=None):
+        self.last_metrics = None
+        context = {}
+        for name in sorted(set(allowed + readable + ["PLAN.md"])):
+            safe_relative(name)
+            path = contained(workspace, name)
+            if path.is_file():
+                context[name] = path.read_text(encoding="utf-8-sig")
+        text = cloud_text(prompt + "\nReturn JSON files with exact paths and complete contents; null deletes a file. Only edit: " + json.dumps(allowed) + "\nRead-only context and current contents:\n" + json.dumps(context, ensure_ascii=False), self.max_context_chars)
+        try:
+            data, self.last_metrics = self.cloud.invoke("coder", text, Path(__file__).resolve().parents[1] / "schemas/coder.json", directory / ("coder-" + uuid.uuid4().hex), timeout=timeout)
+        except ProviderError as exc:
+            self.last_metrics = exc.metrics or getattr(self.cloud, "last_metrics", None)
+            raise
+        if not isinstance(data, dict) or set(data) != {"files"} or not isinstance(data["files"], list):
+            raise ProviderError("Coder Cloud retornou contrato inválido.")
+        changes, seen = [], set()
+        for item in data["files"]:
+            if not isinstance(item, dict) or set(item) != {"path", "content"}:
+                raise ProviderError("Arquivo retornado pelo Coder Cloud inválido.")
+            name, content = item["path"], item["content"]
+            safe_relative(name, editable=True)
+            if content is not None:
+                if not isinstance(content, str) or "\x00" in content:
+                    raise SafetyError("Coder Cloud deve retornar texto UTF-8 sem bytes nulos.")
+                try:
+                    encoded = content.encode("utf-8")
+                except UnicodeError as exc:
+                    raise SafetyError("Coder Cloud retornou texto Unicode inválido.") from exc
+                if len(encoded) > 2_000_000:
+                    raise SafetyError("Arquivo do Coder Cloud excedeu tamanho máximo.")
+            if name not in allowed or name in seen:
+                raise SafetyError("Coder Cloud alterou escopo/duplicou arquivo/excedeu tamanho.")
+            seen.add(name)
+            changes.append((contained(workspace, name), content))
+        for path, content in changes:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+        return {**self.last_metrics, "harness": "codex-structured-files"}

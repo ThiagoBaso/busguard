@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .security import redact
+from .usage import summarize
 
 
 def write_json(path: Path, data) -> None:
@@ -16,11 +17,19 @@ def write_json(path: Path, data) -> None:
 def write_report(run_dir: Path, report: dict) -> None:
     # Logs/prompt bruto de CLI não são persistidos: podem conter tokens/PII.
     safe = json.loads(redact(json.dumps(report, ensure_ascii=False)))
+    safe.setdefault("metrics", {})["by_role"] = summarize(safe.get("metrics", {}).get("calls", []))
     write_json(run_dir / "report.json", safe)
     lines = ["# Relatório da execução", "", f"- Estado: **{safe['status']}**", f"- Modelo: `{safe.get('model', 'n/a')}`", f"- Snapshot: `{safe.get('snapshot_digest', 'n/a')}`", f"- Duração: {safe.get('elapsed_seconds', 0):.2f}s", f"- Chamadas Cloud: {safe.get('cloud_calls', 0)}", f"- Correções: {safe.get('corrections', 0)}", f"- Aprovação Cloud: {safe.get('cloud_approved')}", "", "A aplicação principal não recebe alterações automaticamente. O diff e o workspace estão nesta pasta.", "", "## Verificações", "", "| Check | Resultado | Evidência |", "| --- | --- | --- |"]
     for check in safe.get("checks", []):
         detail = check["details"].replace("|", "\\|").replace("\n", " ")[:1500]
         lines.append(f"| {check['name']} | {check['status']} | {detail} |")
+    lines += ["", "## Consumo por papel e ambiente", "", "| Papel:ambiente | Chamadas | Entrada | Cache lido | Saída | Raciocínio | Total registrado | Completo |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for role, value in safe["metrics"]["by_role"].items():
+        fields = [value.get(k) for k in ["attempts", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens", "total_tokens", "usage_complete"]]
+        lines.append("| " + role + " | " + " | ".join("desconhecido" if v is None else str(v) for v in fields) + " |")
+    lines += ["", "Cache Cloud já integra a entrada e raciocínio Cloud já integra a saída. No OpenCode essas categorias são separadas; o total normalizado as inclui uma única vez. Uso parcial permanece identificado; sem preços/faturamento não calculamos custo financeiro."]
+    if "task_budget" in safe:
+        lines += ["", "## Orçamento persistente da tarefa", "", "```json", json.dumps(safe["task_budget"], ensure_ascii=False, indent=2), "```"]
     lines += ["", "## Métricas", "", "```json", json.dumps(safe.get("metrics", {}), ensure_ascii=False, indent=2), "```", "", "## Limitações", "", "Métricas não fornecidas pelo runtime permanecem null. VRAM mede uso da placa inteira, incluindo outros processos; não comprova distribuição do modelo. Cópias de arquivos não são sandbox de processos. Filtros de conteúdo não substituem a revisão de dados antes do envio Cloud."]
     if safe.get("error"):
         lines += ["", "## Interrupção", "", safe["error"]]

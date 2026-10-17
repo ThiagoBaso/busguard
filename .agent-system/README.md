@@ -2,6 +2,79 @@
 
 Infraestrutura independente do FastAPI, MySQL, Docker e aplicativo Expo. Requer Python **3.12+**, Git, Codex CLI compatível, OpenCode **2.x** e LM Studio local. Usa apenas a biblioteca padrão Python; não instala dependências do projeto. A configuração é JSON para dispensar PyYAML.
 
+## Otimização de consumo e retomada por tarefa
+
+As quatro fases e as evidências estão em [OPTIMIZATION_RESULTS.md](OPTIMIZATION_RESULTS.md).
+O fluxo continua Planner Cloud → Coder Local → checks → Reviewer Cloud, com
+sessões Cloud novas e sem histórico extenso. `--plan-file` reutiliza um plano
+validado e evita chamar novamente o Planner.
+
+`--task-id nome-da-tarefa` mantém chamadas, uso e tempo acumulados entre tentativas
+do **mesmo objetivo**. O ledger fica em `runs/tasks/nome-da-tarefa.sqlite3`;
+cada tentativa conserva seu próprio workspace, relatório e diff. O relatório
+separa papéis/ambientes e inclui cache, raciocínio, compactações e uso auxiliar
+quando recuperáveis do OpenCode. Ausências continuam `null`, nunca zero presumido.
+
+Limites: `--max-cloud-calls`, `--max-reviews`, `--max-corrections`,
+`--max-cloud-tokens`, `--max-total-tokens` e `--total-timeout-seconds`.
+As duas categorias de tokens são limites de volume, não de preço. Cache não é
+somado duas vezes e não tem seu custo equiparado à entrada sem cache. Como o
+runtime pode informar uso somente ao final, uma chamada pode ultrapassar o limite:
+isso é registrado como `budget_exceeded` e nenhuma nova inferência é permitida.
+Uma reserva sem métricas fica desconhecida e impede nova inferência sob o limite
+aplicável. A execução local pode continuar quando apenas o orçamento Cloud acabou.
+
+Retomadas exigem o mesmo task-id e objetivo. `--escalate-run` conserva esse ID;
+artefatos antigos sem ledger exigem conferência/migração antes do escalonamento.
+Uma tentativa ativa após queda abrupta bloqueia reutilização até conferência;
+não apague o ledger para simular orçamento novo. Os limites do Engine não cobrem
+automaticamente o consumo do chat do editor.
+
+O OpenCode 2.0.16 utiliza `compaction.buffer` e `compaction.keep.tokens`.
+O adaptador mantém compactação automática, com buffer/retenção proporcionais ao
+contexto; em 8192 tokens, buffer 1024 e retenção 1024. Não altera fontes do OpenCode.
+Configurações opcionais ficam em `local_llm.compaction.buffer` e `keep_tokens`.
+
+## Verificações TypeScript e React Native
+
+O check `workspace-scripts` executa somente scripts nomeados do `package.json`.
+O perfil padrão de `verification.workspaces` aponta para `mobile/busguard`,
+scripts `test` e `typecheck`. Para outros projetos, configure os caminhos (`.`
+para a raiz) e os scripts reais de teste, lint ou build. Não são inventados
+comandos quando um script não existe: o resultado fica pendente.
+
+Código JS/TS no plano exige esse check. Os comandos e hooks pre/post devem
+coincidir com o snapshot anterior ao Coder. Alterações nesses comandos requerem
+conferência antes de executar. `--allow-test-execution` continua necessário.
+Scripts e artefatos de build usam uma cópia descartável; alterações em fontes
+dessa cópia invalidam a evidência. Checks Python existentes são preservados.
+
+Sem dependências instaladas, prepare-as no ambiente. A opção
+`--copy-workspace-dependencies` copia o `node_modules` existente para a cópia de
+verificação, sem links, sem instalação e sem modificar sua origem. A cópia e a
+limpeza entram no tempo total. Lockfiles de até 2 MB são preservados no snapshot;
+arquivos maiores continuam sujeitos aos limites de segurança.
+
+## Coder Cloud e comparação controlada
+
+`--coder local` é o padrão. `--coder cloud --confirm-cloud-coder` autoriza o
+executor Cloud, que recebe contexto selecionado (`--context-file` e arquivos do
+plano), devolve JSON de arquivos e não recebe ferramentas de shell. Somente
+arquivos permitidos são escritos na cópia. `cloud.model=null` permanece modelo
+não identificado no relatório; configure um modelo explícito para comparação.
+
+O benchmark aceita `--models qwen14b,cloud`. A inclusão de Cloud exige
+`--cloud-benchmark --confirm-cloud-benchmark`; nenhuma autorização é implícita.
+Use essas opções **somente após autorizar o consumo Cloud**. Nenhum benchmark
+Cloud real foi executado na validação destas otimizações.
+
+Plano, snapshot, checks e política de correções são reutilizados em cópias novas.
+O relatório compara duração, checks, achados, aprovação e tokens por papel/ambiente,
+incluindo tentativas que falharam no consumo por tarefa concluída. O orçamento
+Cloud global é compartilhado: candidatos interrompidos por ele ficam sinalizados.
+OpenCode usa ferramentas e o Coder Cloud usa arquivos estruturados; essa diferença
+é declarada, portanto o experimento compara os dois executores completos.
+
 ## Arquitetura e permissões
 
 ```mermaid

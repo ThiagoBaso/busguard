@@ -11,7 +11,9 @@ class SafetyError(AgentError):
 
 
 class ProviderError(AgentError):
-    pass
+    def __init__(self, message, *, process=None, metrics=None):
+        super().__init__(message)
+        self.process, self.metrics = process, metrics
 
 
 class BudgetError(AgentError):

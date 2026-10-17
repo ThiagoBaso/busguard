@@ -66,10 +66,11 @@ def run_process(args: list[str], *, cwd: Path, timeout: float, input_text: str |
             stdout, stderr = process.communicate(input_text, timeout=timeout)
         except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
             terminate_tree(process)
-            process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=10)
             if isinstance(exc, KeyboardInterrupt):
                 raise
-            raise ProviderError(f"Timeout após {timeout:g}s; árvore de processos encerrada.") from exc
+            partial = ProcessResult(stdout or "", stderr or "", process.returncode, time.monotonic() - started)
+            raise ProviderError(f"Timeout após {timeout:g}s; árvore de processos encerrada.", process=partial) from exc
     except OSError as exc:
         raise ProviderError(f"Falha ao iniciar {Path(args[0]).name}: {exc}") from exc
     result = ProcessResult(stdout, stderr, process.returncode, time.monotonic() - started)
@@ -77,6 +78,6 @@ def run_process(args: list[str], *, cwd: Path, timeout: float, input_text: str |
         from .security import redact
         diagnostic = redact((stderr or stdout)[-2000:])
         if any(s in (stdout + stderr).lower() for s in ("out of memory", "cuda oom", "insufficient memory", "not enough memory", "failed to allocate")):
-            raise ProviderError(f"Falta de memória no runtime: {diagnostic}")
-        raise ProviderError(f"{Path(args[0]).name} falhou (código {result.returncode}): {diagnostic}")
+            raise ProviderError(f"Falta de memória no runtime: {diagnostic}", process=result)
+        raise ProviderError(f"{Path(args[0]).name} falhou (código {result.returncode}): {diagnostic}", process=result)
     return result
