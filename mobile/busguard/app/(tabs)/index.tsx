@@ -60,6 +60,39 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     ));
   }, [trip, search, filter]);
 
+  const studentsByStop = useMemo(() => {
+    const groups = new Map<string, { stopOrder: number; stopName: string; students: BoardingStudent[] }>();
+    [...visibleStudents].sort((a, b) => a.stopOrder - b.stopOrder).forEach((student) => {
+      const stopName = student.stopName.trim() || 'Parada sem identificação';
+      const key = `${student.stopOrder}:${normalize(stopName)}`;
+      const group = groups.get(key);
+      if (group) {
+        group.students.push(student);
+      } else {
+        groups.set(key, { stopOrder: student.stopOrder, stopName, students: [student] });
+      }
+    });
+    return [...groups.entries()].map(([key, group]) => ({ key, ...group }));
+  }, [visibleStudents]);
+
+  const nextStop = useMemo(() => {
+    const upcoming = (trip?.students ?? [])
+      .filter((student) => !student.checkedIn && student.status !== 'absent')
+      .sort((a, b) => a.stopOrder - b.stopOrder);
+    const first = upcoming[0];
+    if (!first) return null;
+    const stopName = first.stopName.trim() || 'Parada sem identificação';
+    return {
+      stopOrder: first.stopOrder,
+      stopName,
+      students: upcoming.filter((student) => (
+        student.stopOrder === first.stopOrder &&
+        normalize(student.stopName.trim() || 'Parada sem identificação') === normalize(stopName)
+      )),
+    };
+  }, [trip]);
+  const nextStudent = nextStop?.students[0] ?? null;
+
   async function refreshList() {
     if (pending.current || !allowed) return;
     const result = await query.refresh();
@@ -130,7 +163,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
         />
       ) : (
         <>
-          {query.error ? <Notice tone="error" message={`${failureMessage} A lista abaixo é da última consulta; novos registros estão bloqueados.`} /> : null}
+          {query.error ? <Notice tone="error" message={listOnly ? `${failureMessage} A lista abaixo é da última consulta; novos registros estão bloqueados.` : `${failureMessage} Os dados exibidos são da última consulta.`} /> : null}
           {feedback ? <Notice tone={feedback.tone} message={feedback.message} /> : null}
           <TripSummary routeName={trip.routeName} vehicleLabel={trip.vehicleLabel} status={trip.status} onDetails={() => router.push('/route')} disabled={pendingId !== null || Boolean(query.error)} />
           <View style={styles.metrics}>
@@ -141,13 +174,49 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}><AppText style={{ fontWeight: '700' }}>Resumo da chamada</AppText><AppText muted>{boarded}/{trip.students.length}</AppText></View>
             <View accessibilityLabel={`${boarded} de ${trip.students.length} alunos a bordo`} style={[styles.progress, { backgroundColor: theme.surfaceAlt }]}><View style={{ width: `${trip.students.length ? Math.round(boarded / trip.students.length * 100) : 0}%`, height: 6, backgroundColor: theme.primary, borderRadius: 4 }} /></View>
             <AppText muted>{waiting ? `${waiting} ${waiting === 1 ? 'aluno aguardando' : 'alunos aguardando'} confirmação de embarque.` : 'Nenhum aluno aguardando embarque.'}</AppText>
-            {!listOnly ? <Button label="Abrir chamada completa →" onPress={() => router.push('/(tabs)/students')} /> : null}
           </Card>
-          <View style={styles.sectionHeading}><AppText variant="label" muted>{listOnly ? 'ALUNOS DA VIAGEM' : 'LISTA DE ALUNOS'}</AppText></View>
+          {!listOnly ? (
+            <Card style={[styles.nextStopCard, { backgroundColor: '#FFF9E8', borderColor: '#F3D475' }]}>
+              <View style={styles.nextStopHeader}>
+                <Badge label={nextStop ? 'PRÓXIMA' : 'SEM PENDÊNCIAS'} tone={nextStop ? 'warning' : 'success'} />
+                {nextStop && nextStop.stopOrder > 0 ? <AppText muted>Parada {String(nextStop.stopOrder).padStart(2, '0')}</AppText> : null}
+              </View>
+              <AppText variant="title" style={{ fontSize: 19 }}>
+                {nextStop?.stopName ?? (trip.students.length ? 'Embarques em dia' : 'Rota sem alunos')}
+              </AppText>
+              <AppText muted>
+                {nextStop
+                  ? nextStop.students.length === 1
+                    ? `${nextStudent?.name} aguarda confirmação de embarque.`
+                    : `${nextStop.students.length} alunos aguardam confirmação de embarque nesta parada.`
+                  : trip.students.length
+                    ? 'Não há alunos aguardando confirmação de embarque.'
+                    : 'Nenhum aluno está vinculado a esta rota.'}
+              </AppText>
+              {nextStop ? <AppText variant="label" muted>PARADA DEFINIDA PELA ORDEM DA ROTA</AppText> : null}
+              {nextStudent ? (
+                <Button
+                  label={pendingId === nextStudent.id ? `Confirmando embarque de ${nextStudent.name}…` : `Validar embarque de ${nextStudent.name}`}
+                  accessibilityLabel={`${pendingId === nextStudent.id ? 'Confirmando embarque de' : 'Validar embarque de'} ${nextStudent.name}`}
+                  variant="success"
+                  loading={pendingId === nextStudent.id}
+                  disabled={pendingId !== null || Boolean(query.error) || query.refreshing || feedback?.tone === 'error'}
+                  onPress={() => { void handleBoardingChange(nextStudent, true); }}
+                />
+              ) : null}
+              <Button label="Abrir chamada completa →" variant="secondary" onPress={() => router.push('/(tabs)/students')} />
+            </Card>
+          ) : null}
+          {listOnly ? <>
+          <View style={styles.sectionHeading}>
+            <AppText variant="label" muted>ORDEM DAS PARADAS</AppText>
+            <AppText muted>{visibleStudents.length} {visibleStudents.length === 1 ? 'aluno' : 'alunos'}</AppText>
+          </View>
           <TextInput
             accessibilityLabel="Buscar aluno pelo nome"
             placeholder="Buscar aluno pelo nome"
             placeholderTextColor={theme.muted}
+            clearButtonMode="while-editing"
             value={search}
             onChangeText={setSearch}
             autoCorrect={false}
@@ -166,19 +235,43 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
               </Pressable>
             ))}
           </View>
-          {(listOnly || search || filter !== 'all' ? visibleStudents : visibleStudents.slice(0, 3)).map((student) => (
-            <AlunoItem
-              key={`${trip.id}:${student.id}`}
-              aluno={student}
-              readOnly={!listOnly}
-              disabled={pendingId !== null || Boolean(query.error) || query.refreshing || feedback?.tone === 'error'}
-              pending={pendingId === student.id}
-              onBoardingChange={handleBoardingChange}
-            />
+          {studentsByStop.map((group) => (
+            <View key={group.key} style={styles.stopGroup}>
+              <View style={[styles.stopHeading, { borderBottomColor: theme.border }]}>
+                <View style={[styles.stopNumber, { backgroundColor: theme.primarySoft }]}>
+                  <AppText style={{ color: theme.primary, fontWeight: '800' }}>{group.stopOrder > 0 ? String(group.stopOrder).padStart(2, '0') : '•'}</AppText>
+                </View>
+                <View style={styles.stopIdentity}>
+                  <AppText variant="label" muted>{group.stopOrder > 0 ? `PARADA ${String(group.stopOrder).padStart(2, '0')}` : 'PARADA'}</AppText>
+                  <AppText style={{ fontWeight: '700' }}>{group.stopName}</AppText>
+                </View>
+                <Badge label={`${group.students.length} ${group.students.length === 1 ? 'aluno' : 'alunos'}`} />
+              </View>
+              {group.students.map((student) => (
+                <AlunoItem
+                  key={`${trip.id}:${student.id}`}
+                  aluno={student}
+                  showStop={false}
+                  disabled={pendingId !== null || Boolean(query.error) || query.refreshing || feedback?.tone === 'error'}
+                  pending={pendingId === student.id}
+                  onBoardingChange={handleBoardingChange}
+                />
+              ))}
+            </View>
           ))}
-          {visibleStudents.length === 0 ? <StatePanel title={trip.students.length ? 'Nenhum resultado' : 'Lista vazia'} message={trip.students.length ? 'Experimente outro nome ou selecione Todos.' : 'Nenhum aluno foi vinculado a esta rota.'} /> : null}
-          {!listOnly && !search && filter === 'all' && visibleStudents.length > 3 ? <Button label={`Ver todos os ${trip.students.length} alunos`} variant="secondary" onPress={() => router.push('/(tabs)/students')} /> : null}
-          <Button label={query.refreshing ? 'Atualizando lista…' : 'Atualizar lista'} variant="secondary" loading={query.refreshing} disabled={pendingId !== null} onPress={() => { void refreshList(); }} />
+          {visibleStudents.length === 0 ? <>
+            <StatePanel
+              title={trip.students.length ? 'Nenhum aluno encontrado' : 'Lista vazia'}
+              message={trip.students.length
+                ? 'A busca ou o filtro atual não encontrou alunos.'
+                : 'Nenhum aluno foi vinculado a esta rota.'}
+            />
+            {trip.students.length > 0 && (search.trim() || filter !== 'all') ? (
+              <Button label="Limpar busca e filtros" variant="secondary" onPress={() => { setSearch(''); setFilter('all'); }} />
+            ) : null}
+          </> : null}
+          </> : null}
+          <Button label={query.refreshing ? (listOnly ? 'Atualizando chamada…' : 'Atualizando viagem…') : listOnly ? 'Atualizar lista' : 'Atualizar viagem'} variant="secondary" loading={query.refreshing} disabled={pendingId !== null} onPress={() => { void refreshList(); }} />
           <AppText muted>{query.updatedAt ? `Última consulta às ${query.updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : ''}</AppText>
         </>
       )}
@@ -190,7 +283,13 @@ const styles = StyleSheet.create({
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   progress: { height: 6, borderRadius: 4, overflow: 'hidden' },
   metric: { flex: 1, minWidth: 80 },
-  sectionHeading: { gap: 4, marginTop: 8 },
+  sectionHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 },
+  nextStopCard: { borderRadius: 18 },
+  nextStopHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  stopGroup: { gap: 8 },
+  stopHeading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 8, borderBottomWidth: 1 },
+  stopNumber: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  stopIdentity: { flex: 1, gap: 2 },
   search: { minHeight: 50, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16 },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filter: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, borderWidth: 1 },

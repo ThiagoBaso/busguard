@@ -9,6 +9,11 @@ import { useAppTheme } from '@/constants/theme';
 import { ApiError, getApiErrorMessage } from '@/services/apiClient';
 import { useSession } from '@/services/session';
 
+const demoCredentials = {
+  driver: { email: 'joao.pereira@transportescolar.com', password: 'Busguard@123' },
+  responsible: { email: 'maria.fernandes@email.com', password: 'Busguard@123' },
+} as const;
+
 export default function LoginScreen() {
   const { login } = useSession();
   const theme = useAppTheme();
@@ -16,8 +21,9 @@ export default function LoginScreen() {
   const params = useLocalSearchParams<{ profile?: string | string[] }>();
   const selectedProfile = Array.isArray(params.profile) ? params.profile[0] : params.profile;
   const responsible = selectedProfile === 'responsible';
-  const [email, setEmail] = useState(__DEV__ ? 'joao.pereira@transportescolar.com' : '');
-  const [password, setPassword] = useState(__DEV__ ? 'Busguard@123' : '');
+  const credentials = demoCredentials[responsible ? 'responsible' : 'driver'];
+  const [email, setEmail] = useState(() => __DEV__ ? credentials.email : '');
+  const [password, setPassword] = useState(() => __DEV__ ? credentials.password : '');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,6 +35,14 @@ export default function LoginScreen() {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    const profileCredentials = demoCredentials[responsible ? 'responsible' : 'driver'];
+    setEmail(profileCredentials.email);
+    setPassword(profileCredentials.password);
+    setError(null);
+  }, [responsible]);
 
   async function handleLogin() {
     if (busy.current) return;

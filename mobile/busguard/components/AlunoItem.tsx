@@ -10,14 +10,17 @@ type AlunoItemProps = {
   disabled?: boolean;
   pending?: boolean;
   readOnly?: boolean;
+  showStop?: boolean;
   onBoardingChange: (aluno: BoardingStudent, checkedIn: boolean) => void;
 };
 
-export default function AlunoItem({ aluno, disabled = false, pending = false, readOnly = false, onBoardingChange }: AlunoItemProps) {
+export default function AlunoItem({ aluno, disabled = false, pending = false, readOnly = false, showStop = true, onBoardingChange }: AlunoItemProps) {
   const theme = useAppTheme();
   const [expanded, setExpanded] = useState(false);
   const absent = aluno.status === 'absent';
   const initials = aluno.name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+  const actionLabel = aluno.checkedIn ? 'Registrar desembarque' : 'Validar embarque';
+  const pendingLabel = aluno.checkedIn ? 'Confirmando desembarque…' : 'Confirmando embarque…';
 
   return (
     <Card>
@@ -27,7 +30,7 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
         </View>
         <View style={styles.identity}>
           <AppText style={styles.name}>{aluno.name}</AppText>
-          <AppText muted style={{ fontSize: 12 }}>{aluno.age} anos{aluno.stopName ? ` · ${aluno.stopName}` : ''}</AppText>
+          <AppText muted style={{ fontSize: 12 }}>{aluno.age} anos{showStop && aluno.stopName ? ` · ${aluno.stopName}` : ''}</AppText>
         </View>
       </View>
       <View style={styles.status}>
@@ -36,11 +39,11 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${expanded ? 'Ocultar' : 'Mostrar'} detalhes de ${aluno.name}`}
+        accessibilityLabel={`${expanded ? 'Ocultar' : 'Mostrar'} endereço e detalhes de ${aluno.name}`}
         accessibilityState={{ expanded }}
         onPress={() => setExpanded((value) => !value)}
         style={({ pressed }) => [styles.detailsToggle, { borderColor: theme.border, opacity: pressed ? 0.65 : 1 }]}>
-        <AppText style={{ color: theme.primary, fontWeight: '700' }}>{expanded ? 'Ocultar detalhes −' : 'Ver detalhes +'}</AppText>
+        <AppText style={{ color: theme.primary, fontWeight: '700' }}>{expanded ? 'Ocultar endereço −' : 'Ver endereço +'}</AppText>
       </Pressable>
       {expanded ? (
         <View style={[styles.details, { backgroundColor: theme.surfaceAlt }]}>
@@ -51,8 +54,8 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
       ) : null}
       {readOnly ? null : absent ? <AppText muted>Embarque indisponível para aluno marcado como ausente.</AppText> : (
         <Button
-          label={aluno.checkedIn ? 'Registrar desembarque' : 'Validar embarque'}
-          accessibilityLabel={`${aluno.checkedIn ? 'Registrar desembarque de' : 'Validar embarque de'} ${aluno.name}`}
+          label={pending ? pendingLabel : actionLabel}
+          accessibilityLabel={`${pending ? pendingLabel : actionLabel} de ${aluno.name}`}
           variant={aluno.checkedIn ? 'secondary' : 'primary'}
           disabled={disabled || pending}
           loading={pending}
@@ -64,9 +67,9 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
 }
 
 const styles = StyleSheet.create({
-  heading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 42, height: 42, borderRadius: 21, justifyContent: 'center', alignItems: 'center' },
-  identity: { flex: 1, gap: 3, minWidth: 0 },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  avatar: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  identity: { flex: 1, gap: 2, minWidth: 0 },
   name: { fontWeight: '700', fontSize: 15 },
   status: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   detailsToggle: { minHeight: 44, paddingVertical: 10, borderTopWidth: 1, justifyContent: 'center' },

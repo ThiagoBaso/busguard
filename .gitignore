@@ -19,6 +19,3 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
-
-# Execuções do sistema multiagente (contextos, diffs e workspaces locais)
-.agent-system/runs/

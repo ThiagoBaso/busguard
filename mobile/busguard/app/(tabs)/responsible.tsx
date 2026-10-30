@@ -15,8 +15,10 @@ export default function ResponsibleHomeScreen() {
   const allowed = status === 'signedIn' && user?.role === 'responsible';
   const query = useTripQuery(getResponsibleTrip, allowed);
   const trip = query.data;
+  const childIsBoarded = trip?.childStatus.toLocaleLowerCase('pt-BR') === 'a bordo';
+  const tripStatus = trip?.status === 'Em transito' ? 'Em trânsito' : trip?.status;
   const consultationTime = query.updatedAt?.toLocaleTimeString('pt-BR', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour: '2-digit', minute: '2-digit',
   });
   const onRefresh = () => { void query.refresh(); };
 
@@ -36,39 +38,63 @@ export default function ResponsibleHomeScreen() {
           {query.error && <Notice tone="error" message={`${query.error} Os dados abaixo são da consulta anterior e podem ter mudado.`} />}
           <Card style={[styles.hero, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <View style={styles.heroTop}>
-              <AppText variant="label" muted>CRIANÇA VINCULADA</AppText>
-              <Badge label={query.error ? 'Consulta anterior' : 'Viagem ativa'} tone={query.error ? 'warning' : 'success'} />
+              <AppText variant="label" muted>ACOMPANHAMENTO DA CRIANÇA</AppText>
+              <Badge label={query.error ? 'Consulta anterior' : 'Dados atualizados'} tone={query.error ? 'warning' : 'success'} />
             </View>
-            <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}><View style={[styles.avatar, { backgroundColor: theme.surfaceAlt }]}><AppIcon name="person" color={theme.primary} /></View><View style={{ flex: 1 }}><AppText variant="title">{trip.childName}</AppText><AppText muted>Transporte escolar</AppText></View></View>
-            <View style={styles.statusLine}>
-              <View accessibilityElementsHidden importantForAccessibility="no" style={[styles.statusDot, { backgroundColor: trip.childStatus === 'A bordo' ? theme.success : theme.accent }]} />
-              <AppText variant="title" style={styles.statusText}>{trip.childStatus}</AppText>
+            <View style={styles.childHeader}>
+              <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
+                <AppText style={{ color: theme.primary, fontWeight: '800' }}>{getInitials(trip.childName)}</AppText>
+              </View>
+              <View style={styles.childIdentity}>
+                <AppText variant="title">{trip.childName}</AppText>
+                <AppText muted>Transporte escolar</AppText>
+              </View>
             </View>
-            <View style={[styles.security, { backgroundColor: theme.primarySoft }]}><AppIcon name="shield" size={18} color={theme.primary} /><AppText style={{ color: theme.primary, fontSize: 12 }}>Acompanhamento pelos registros da viagem</AppText></View>
+            <View style={[styles.statusPanel, { backgroundColor: childIsBoarded ? theme.primarySoft : theme.surfaceAlt }]}>
+              <View style={[styles.statusIcon, { backgroundColor: theme.surface }]}>
+                <AppIcon name={childIsBoarded ? 'check' : 'clock'} size={21} color={childIsBoarded ? theme.success : theme.accent} />
+              </View>
+              <View style={styles.statusContent}>
+                <AppText variant="label" muted>STATUS DO EMBARQUE</AppText>
+                <AppText style={styles.statusTitle}>{trip.childStatus}</AppText>
+                <AppText muted>{childIsBoarded ? 'O último registro confirma o embarque.' : 'Aguardando o registro de embarque.'}</AppText>
+              </View>
+            </View>
+            <View style={[styles.security, { backgroundColor: theme.primarySoft }]}>
+              <AppIcon name="shield" size={18} color={theme.primary} />
+              <AppText style={{ color: theme.primary, fontSize: 12, flex: 1 }}>Acompanhamento baseado nos registros de embarque; sem localização em tempo real.</AppText>
+            </View>
             <View style={[styles.event, { borderTopColor: theme.border }]}>
-              <AppText variant="label">Último registro</AppText>
-              <AppText>{trip.lastUpdate === '--:--' ? 'Nenhum registro disponível' : trip.lastUpdate}</AppText>
+              <AppText variant="label" muted>ÚLTIMO REGISTRO</AppText>
+              <AppText variant="metric" style={styles.eventTime}>{trip.lastUpdate === '--:--' ? '—' : trip.lastUpdate}</AppText>
+              {trip.lastUpdate === '--:--' ? <AppText muted>Nenhum registro de embarque disponível.</AppText> : null}
             </View>
           </Card>
 
-          <View style={styles.cards}>
-            <Card style={styles.summaryCard}>
-              <AppText variant="label" muted>VIAGEM</AppText>
-              <AppText style={{ fontSize: 18, fontWeight: '700' }}>{trip.routeName}</AppText>
-              <Badge label={trip.status} tone="neutral" />
-            </Card>
-            <Card style={styles.summaryCard}>
-              <AppText variant="label" muted>MOTORISTA</AppText>
-              <AppText style={{ fontSize: 18, fontWeight: '700' }}>{trip.driverName}</AppText>
-              <AppText muted>{trip.vehicleLabel}</AppText>
-            </Card>
-          </View>
+          <Card style={styles.tripCard}>
+            <View style={styles.routeTop}>
+              <AppText variant="label" muted>ROTA ATUAL</AppText>
+              <Badge label={tripStatus ?? trip.status} tone="neutral" />
+            </View>
+            <AppText variant="title" style={{ fontSize: 19 }}>{trip.routeName}</AppText>
+            <View style={[styles.divider, { borderTopColor: theme.border }]} />
+            <View style={styles.driverRow}>
+              <View style={[styles.driverAvatar, { backgroundColor: theme.surfaceAlt }]}>
+                <AppText style={{ color: theme.primary, fontWeight: '800' }}>{getInitials(trip.driverName)}</AppText>
+              </View>
+              <View style={styles.driverIdentity}>
+                <AppText variant="label" muted>MOTORISTA</AppText>
+                <AppText style={{ fontWeight: '700' }}>{trip.driverName}</AppText>
+                <AppText muted>{trip.vehicleLabel}</AppText>
+              </View>
+            </View>
+          </Card>
 
           <Button label="Ver detalhes da viagem" disabled={Boolean(query.error)} onPress={() => router.push('/trip-details')} />
           <Card>
             <AppText variant="label">Atualização do acompanhamento</AppText>
-            <AppText muted>{consultationTime ? `Última consulta bem-sucedida às ${consultationTime}.` : 'Aguardando confirmação da consulta.'}</AppText>
-            <AppText muted>Os dados se atualizam enquanto você acompanha esta tela.</AppText>
+            <AppText muted>{consultationTime ? `Última consulta concluída às ${consultationTime}.` : 'Aguardando confirmação da consulta.'}</AppText>
+            <AppText muted>Atualizamos os registros enquanto esta tela permanece aberta.</AppText>
             <Button label="Atualizar acompanhamento" variant="secondary" onPress={onRefresh} loading={query.refreshing} />
           </Card>
         </>
@@ -77,15 +103,27 @@ export default function ResponsibleHomeScreen() {
   );
 }
 
+function getInitials(name: string) {
+  return name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase('pt-BR') || '•';
+}
+
 const styles = StyleSheet.create({
-  hero: { gap: 16, borderWidth: 1 },
-  avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  security: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 10 },
+  hero: { gap: 15, borderWidth: 1 },
+  avatar: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  childHeader: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  childIdentity: { flex: 1, minWidth: 0, gap: 3 },
+  statusPanel: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13, borderRadius: 14 },
+  statusIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  statusContent: { flex: 1, minWidth: 0, gap: 3 },
+  statusTitle: { fontSize: 18, fontWeight: '800' },
+  security: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 10 },
   heroTop: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  statusLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  statusDot: { width: 12, height: 12, borderRadius: 6 },
-  statusText: { flex: 1, minWidth: 0 },
-  event: { paddingTop: 16, borderTopWidth: 1, gap: 6 },
-  cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  summaryCard: { flexBasis: 260, flexGrow: 1, minWidth: 0, gap: 10 },
+  event: { paddingTop: 14, borderTopWidth: 1, gap: 2 },
+  eventTime: { fontSize: 25 },
+  tripCard: { gap: 12 },
+  routeTop: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  divider: { borderTopWidth: 1 },
+  driverRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  driverAvatar: { width: 44, height: 44, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  driverIdentity: { flex: 1, minWidth: 0, gap: 2 },
 });

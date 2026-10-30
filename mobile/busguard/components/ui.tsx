@@ -77,14 +77,14 @@ export function StatePanel({ title, message, loading = false, onRetry }: { title
 
 const styles = StyleSheet.create({
   screen: { flex: 1 }, scroll: { flexGrow: 1, paddingBottom: 24 },
-  container: { width: '100%', maxWidth: 640, alignSelf: 'center', paddingHorizontal: 18, gap: 13 },
-  topBar: { paddingVertical: 14, borderBottomWidth: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  container: { width: '100%', maxWidth: 640, alignSelf: 'center', paddingHorizontal: 16, gap: 12 },
+  topBar: { paddingVertical: 12, borderBottomWidth: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   miniBadge: { borderRadius: 7, padding: 6 },
-  header: { paddingTop: 9, paddingBottom: 3, gap: 6 }, brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  header: { paddingTop: 8, paddingBottom: 3, gap: 6 }, brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandDot: { width: 9, height: 9, borderRadius: 3 }, text: { flexShrink: 1 },
   body: { fontSize: 14, lineHeight: 21 }, title: { fontSize: 22, lineHeight: 29, fontWeight: '800', letterSpacing: -0.5 },
   label: { fontSize: 11, lineHeight: 17, fontWeight: '700', letterSpacing: 0.7 }, metric: { fontSize: 28, lineHeight: 35, fontWeight: '800', letterSpacing: -0.8 },
-  card: { borderWidth: 1, borderRadius: 15, padding: 16, gap: 10 },
+  card: { borderWidth: 1, borderRadius: 16, padding: 15, gap: 10 },
   button: { minHeight: 48, borderRadius: 11, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 },
   buttonLabel: { fontSize: 15, lineHeight: 21, fontWeight: '700', textAlign: 'center', flexShrink: 1 },
   badge: { alignSelf: 'flex-start', borderRadius: 10, paddingHorizontal: 11, paddingVertical: 6, maxWidth: '100%' },

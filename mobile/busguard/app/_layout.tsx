@@ -1,12 +1,11 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/components/useColorScheme';
 import { SessionProvider, useSession } from '@/services/session';
 import { Screen, StatePanel, Button } from '@/components/ui';
 import { useAppTheme } from '@/constants/theme';
@@ -48,7 +47,6 @@ export default function RootLayout() {
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
   const { status, user, retry, logout, errorMessage } = useSession();
   const theme = useAppTheme();
 
@@ -63,8 +61,8 @@ function RootLayoutNav() {
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <StatusBar style={theme.dark ? 'light' : 'dark'} />
+    <ThemeProvider value={DefaultTheme}>
+      <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.background } }}>
         <Stack.Protected guard={status === 'signedOut'}>
           <Stack.Screen name="welcome" />

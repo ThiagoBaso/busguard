@@ -1,9 +1,7 @@
-import { useColorScheme } from '@/components/useColorScheme';
-
 const light = {
-  background: '#F8FAFC', surface: '#ffffff', surfaceAlt: '#F0F4FA',
-  text: '#17243C', muted: '#61708b', primary: '#006B4F', primarySoft: '#E8F8F0',
-  accent: '#F8B900', border: '#E8EDF3', danger: '#b42338', success: '#047857', dark: false,
+  background: '#F7F8FD', surface: '#FFFFFF', surfaceAlt: '#F0F3FA',
+  text: '#18233D', muted: '#61708B', primary: '#006B4F', primarySoft: '#E8F8F0',
+  accent: '#F9B900', border: '#E5EAF2', danger: '#B42338', success: '#047857', dark: false,
 };
 const dark = {
   background: '#101727', surface: '#1b2539', surfaceAlt: '#25314a',
@@ -12,7 +10,7 @@ const dark = {
 };
 
 export function useAppTheme() {
-  return useColorScheme() === 'dark' ? dark : light;
+  return light;
 }
 
 export const themes = { light, dark };
