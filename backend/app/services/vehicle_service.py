@@ -71,7 +71,7 @@ def get_current_passenger_ids(db: Session, vehicle_id: int) -> list[int]:
     rows = db.execute(
         select(latest_events.c.passenger_id)
         .where(latest_events.c.row_number == 1)
-        .where(latest_events.c.action == "entry")
+        .where(func.lower(latest_events.c.action) == "entry")
     ).all()
 
     return [row.passenger_id for row in rows]

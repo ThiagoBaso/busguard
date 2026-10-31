@@ -7,6 +7,7 @@ import { AppText, Badge, Button, Card, Notice, Screen, StatePanel } from '@/comp
 import { useAppTheme } from '@/constants/theme';
 import { useTripQuery } from '@/hooks/useTripQuery';
 import { useSession } from '@/services/session';
+import { getApiErrorMessage } from '@/services/apiClient';
 import { BoardingStudent, getDriverTrip, updateBoardingStatus } from '@/services/tripService';
 import TripSummary from '@/components/TripSummary';
 
@@ -124,11 +125,11 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
             : 'O registro foi confirmado, mas a atualização da lista falhou. Consulte a viagem novamente antes de registrar outra alteração.',
         });
       }
-    } catch {
+    } catch (caught) {
       if (mounted.current && focused.current && !operation.signal.aborted) {
         setFeedback({ tone: 'error', message: confirmed
           ? 'O registro foi confirmado, mas a atualização falhou. Atualize a viagem.'
-          : 'Não foi possível confirmar o registro. Atualize a viagem antes de tentar novamente.' });
+          : getApiErrorMessage(caught, checkedIn ? 'confirmar o embarque' : 'confirmar o desembarque') });
         query.cancel();
       }
     } finally {
@@ -140,6 +141,9 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
 
   const boarded = trip?.students.filter((student) => student.checkedIn).length ?? 0;
   const waiting = trip?.students.filter((student) => !student.checkedIn && student.status !== 'absent').length ?? 0;
+  const absent = trip?.students.filter((student) => student.status === 'absent').length ?? 0;
+  const eligibleStudents = boarded + waiting;
+  const boardingProgress = eligibleStudents ? Math.round(boarded / eligibleStudents * 100) : 0;
   const failureMessage = query.errorStatus === 403
     ? 'Seu perfil não tem acesso a esta viagem. Confira sua conta ou procure a administração.'
     : query.errorStatus === 404
@@ -150,8 +154,8 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     <Screen
       withTabBar
       eyebrow={user?.role === 'supervisor' ? 'PAINEL DO SUPERVISOR' : 'PAINEL DO MOTORISTA'}
-      title={listOnly ? 'Chamada dos alunos' : 'Sua viagem de hoje'}
-      subtitle={listOnly ? 'Cada embarque, uma confirmação.' : 'Tudo pronto para mais uma jornada segura.'}
+      title={listOnly ? 'Chamada dos alunos' : 'Sua viagem'}
+      subtitle={listOnly ? 'Confira a lista e registre cada embarque.' : 'Rota, progresso e próxima parada.'}
       refreshing={query.refreshing}
       onRefresh={() => { void refreshList(); }}>
       {!trip ? (
@@ -165,20 +169,51 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
         <>
           {query.error ? <Notice tone="error" message={listOnly ? `${failureMessage} A lista abaixo é da última consulta; novos registros estão bloqueados.` : `${failureMessage} Os dados exibidos são da última consulta.`} /> : null}
           {feedback ? <Notice tone={feedback.tone} message={feedback.message} /> : null}
-          <TripSummary routeName={trip.routeName} vehicleLabel={trip.vehicleLabel} status={trip.status} onDetails={() => router.push('/route')} disabled={pendingId !== null || Boolean(query.error)} />
-          <View style={styles.metrics}>
-            <Card style={[styles.metric, { backgroundColor: theme.primarySoft }]}><AppText variant="metric" style={{ color: theme.primary }}>{boarded}</AppText><AppText muted>A bordo</AppText></Card>
-            <Card style={styles.metric}><AppText variant="metric">{waiting}</AppText><AppText muted>Aguardando</AppText></Card>
-          </View>
-          <Card>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}><AppText style={{ fontWeight: '700' }}>Resumo da chamada</AppText><AppText muted>{boarded}/{trip.students.length}</AppText></View>
-            <View accessibilityLabel={`${boarded} de ${trip.students.length} alunos a bordo`} style={[styles.progress, { backgroundColor: theme.surfaceAlt }]}><View style={{ width: `${trip.students.length ? Math.round(boarded / trip.students.length * 100) : 0}%`, height: 6, backgroundColor: theme.primary, borderRadius: 4 }} /></View>
-            <AppText muted>{waiting ? `${waiting} ${waiting === 1 ? 'aluno aguardando' : 'alunos aguardando'} confirmação de embarque.` : 'Nenhum aluno aguardando embarque.'}</AppText>
+          <TripSummary
+            routeName={trip.routeName}
+            vehicleLabel={trip.vehicleLabel}
+            status={trip.status}
+            onDetails={() => router.push('/route')}
+            disabled={pendingId !== null || Boolean(query.error)}
+            compact={listOnly}
+          />
+          <Card style={styles.progressCard}>
+            <View style={styles.progressHeading}>
+              <View style={styles.progressTitleGroup}>
+                <AppText variant="label" muted>RESUMO DA CHAMADA</AppText>
+                <AppText style={styles.progressTitle}>{boarded} de {eligibleStudents} embarcados</AppText>
+              </View>
+              <AppText style={styles.progressPercent}>{boardingProgress}%</AppText>
+            </View>
+            <View accessibilityLabel={`${boarded} de ${eligibleStudents} alunos elegíveis embarcados`} style={[styles.progressTrack, { backgroundColor: theme.surfaceAlt }]}>
+              <View style={[styles.progressFill, { width: `${boardingProgress}%`, backgroundColor: theme.primary }]} />
+            </View>
+            <View style={styles.callCounts}>
+              <View style={[styles.callCount, { backgroundColor: theme.primarySoft }]}>
+                <AppText style={[styles.callCountValue, { color: theme.primary }]}>{boarded}</AppText>
+                <AppText muted style={styles.callCountLabel}>A bordo</AppText>
+              </View>
+              <View style={[styles.callCount, { backgroundColor: theme.surfaceAlt }]}>
+                <AppText style={styles.callCountValue}>{waiting}</AppText>
+                <AppText muted style={styles.callCountLabel}>Aguardando</AppText>
+              </View>
+              <View style={[styles.callCount, { backgroundColor: '#FFF7DE' }]}>
+                <AppText style={[styles.callCountValue, { color: '#8A6500' }]}>{absent}</AppText>
+                <AppText muted style={styles.callCountLabel}>Ausentes</AppText>
+              </View>
+            </View>
+            <AppText muted>
+              {waiting
+                ? `${waiting} ${waiting === 1 ? 'aluno aguarda' : 'alunos aguardam'} confirmação de embarque.`
+                : eligibleStudents
+                  ? 'Todos os embarques foram confirmados.'
+                  : 'Nenhum aluno disponível para embarque.'}
+            </AppText>
           </Card>
           {!listOnly ? (
             <Card style={[styles.nextStopCard, { backgroundColor: '#FFF9E8', borderColor: '#F3D475' }]}>
               <View style={styles.nextStopHeader}>
-                <Badge label={nextStop ? 'PRÓXIMA' : 'SEM PENDÊNCIAS'} tone={nextStop ? 'warning' : 'success'} />
+                <Badge label={nextStop ? 'PRÓXIMA PARADA' : 'ROTA EM DIA'} tone={nextStop ? 'warning' : 'success'} />
                 {nextStop && nextStop.stopOrder > 0 ? <AppText muted>Parada {String(nextStop.stopOrder).padStart(2, '0')}</AppText> : null}
               </View>
               <AppText variant="title" style={{ fontSize: 19 }}>
@@ -187,29 +222,28 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
               <AppText muted>
                 {nextStop
                   ? nextStop.students.length === 1
-                    ? `${nextStudent?.name} aguarda confirmação de embarque.`
+                    ? `${nextStudent?.name} aguarda confirmação de embarque nesta parada.`
                     : `${nextStop.students.length} alunos aguardam confirmação de embarque nesta parada.`
                   : trip.students.length
                     ? 'Não há alunos aguardando confirmação de embarque.'
                     : 'Nenhum aluno está vinculado a esta rota.'}
               </AppText>
-              {nextStop ? <AppText variant="label" muted>PARADA DEFINIDA PELA ORDEM DA ROTA</AppText> : null}
               {nextStudent ? (
                 <Button
                   label={pendingId === nextStudent.id ? `Confirmando embarque de ${nextStudent.name}…` : `Validar embarque de ${nextStudent.name}`}
                   accessibilityLabel={`${pendingId === nextStudent.id ? 'Confirmando embarque de' : 'Validar embarque de'} ${nextStudent.name}`}
                   variant="success"
                   loading={pendingId === nextStudent.id}
-                  disabled={pendingId !== null || Boolean(query.error) || query.refreshing || feedback?.tone === 'error'}
+                  disabled={pendingId !== null || Boolean(query.error) || feedback?.tone === 'error'}
                   onPress={() => { void handleBoardingChange(nextStudent, true); }}
                 />
               ) : null}
-              <Button label="Abrir chamada completa →" variant="secondary" onPress={() => router.push('/(tabs)/students')} />
+              <Button label="Ver chamada completa" variant="secondary" onPress={() => router.push('/(tabs)/students')} />
             </Card>
           ) : null}
           {listOnly ? <>
           <View style={styles.sectionHeading}>
-            <AppText variant="label" muted>ORDEM DAS PARADAS</AppText>
+            <AppText variant="label" muted>ALUNOS POR PARADA</AppText>
             <AppText muted>{visibleStudents.length} {visibleStudents.length === 1 ? 'aluno' : 'alunos'}</AppText>
           </View>
           <TextInput
@@ -252,7 +286,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                   key={`${trip.id}:${student.id}`}
                   aluno={student}
                   showStop={false}
-                  disabled={pendingId !== null || Boolean(query.error) || query.refreshing || feedback?.tone === 'error'}
+                  disabled={pendingId !== null || Boolean(query.error) || feedback?.tone === 'error'}
                   pending={pendingId === student.id}
                   onBoardingChange={handleBoardingChange}
                 />
@@ -280,11 +314,19 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
 }
 
 const styles = StyleSheet.create({
-  metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  progress: { height: 6, borderRadius: 4, overflow: 'hidden' },
-  metric: { flex: 1, minWidth: 80 },
+  progressCard: { gap: 12, borderRadius: 18 },
+  progressHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  progressTitleGroup: { flex: 1, minWidth: 0, gap: 3 },
+  progressTitle: { fontWeight: '800', fontSize: 17, lineHeight: 23 },
+  progressPercent: { fontWeight: '800', fontSize: 20, color: '#047857' },
+  progressTrack: { height: 9, borderRadius: 6, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 6 },
+  callCounts: { flexDirection: 'row', gap: 8 },
+  callCount: { flex: 1, minWidth: 0, borderRadius: 13, paddingHorizontal: 10, paddingVertical: 9, gap: 1 },
+  callCountValue: { fontSize: 19, lineHeight: 24, fontWeight: '800' },
+  callCountLabel: { fontSize: 11, lineHeight: 16 },
   sectionHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 },
-  nextStopCard: { borderRadius: 18 },
+  nextStopCard: { borderRadius: 18, gap: 11, padding: 17 },
   nextStopHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   stopGroup: { gap: 8 },
   stopHeading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 8, borderBottomWidth: 1 },

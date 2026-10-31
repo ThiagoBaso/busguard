@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ["JWT_SECRET_KEY"] = "chave-local-exclusiva-dos-testes"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
@@ -13,9 +14,17 @@ from app.services.trip_service import (
     CurrentTripNotFoundError,
     TripNotInProgressError,
     _authorized_trip_query,
+    _event_has_action,
     get_driver_current_trip,
     set_boarding_status,
 )
+
+
+class EventActionNormalizationTests(unittest.TestCase):
+    def test_mysql_enum_actions_are_matched_case_insensitively(self):
+        self.assertTrue(_event_has_action(SimpleNamespace(action="ENTRY"), "entry"))
+        self.assertTrue(_event_has_action(SimpleNamespace(action="entry"), "ENTRY"))
+        self.assertFalse(_event_has_action(SimpleNamespace(action="EXIT"), "entry"))
 
 
 class MobileAuthorizationTests(unittest.TestCase):

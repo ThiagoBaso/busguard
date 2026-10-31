@@ -114,7 +114,7 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
     if passenger is None:
         raise CurrentTripNotFoundError
     latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id, trip.started_at)
-    child_status = "A bordo" if latest_event and latest_event.action == "entry" else "Aguardando embarque"
+    child_status = "A bordo" if _event_has_action(latest_event, "entry") else "Aguardando embarque"
     last_update = latest_event.created_at.strftime("%H:%M") if latest_event else "--:--"
 
     return {
@@ -160,7 +160,7 @@ def set_boarding_status(
     latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_id, trip.started_at)
     next_action = "entry" if checked_in else "exit"
 
-    if latest_event and latest_event.action == next_action:
+    if _event_has_action(latest_event, next_action):
         return {
             "passenger_id": passenger_id,
             "checked_in": checked_in,
@@ -199,7 +199,7 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
 
     for index, (passenger, address) in enumerate(passengers, start=1):
         latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at)
-        checked_in = bool(latest_event and latest_event.action == "entry")
+        checked_in = _event_has_action(latest_event, "entry")
         students.append(
             BoardingStudent(
                 id=str(passenger.id),
@@ -232,6 +232,10 @@ def _latest_event_for_passenger(
         query = query.filter(AccessEvent.created_at >= started_at)
 
     return query.order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc()).first()
+
+
+def _event_has_action(event: AccessEvent | None, action: str) -> bool:
+    return bool(event and event.action and event.action.strip().lower() == action.lower())
 
 
 

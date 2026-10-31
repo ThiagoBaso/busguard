@@ -23,7 +23,7 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
   const pendingLabel = aluno.checkedIn ? 'Confirmando desembarque…' : 'Confirmando embarque…';
 
   return (
-    <Card>
+    <Card style={styles.card}>
       <View style={styles.heading}>
         <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
           <AppText style={{ color: theme.primary, fontWeight: '800' }}>{initials || 'A'}</AppText>
@@ -34,8 +34,11 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
         </View>
       </View>
       <View style={styles.status}>
-        <Badge label={absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'} tone={aluno.checkedIn ? 'success' : 'neutral'} />
-        {aluno.checkedIn && aluno.time ? <AppText muted>Embarque às {aluno.time}</AppText> : null}
+        <Badge
+          label={absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
+          tone={absent ? 'warning' : aluno.checkedIn ? 'success' : 'neutral'}
+        />
+        {aluno.checkedIn && aluno.time ? <AppText muted style={styles.eventTime}>Embarque às {aluno.time}</AppText> : null}
       </View>
       <Pressable
         accessibilityRole="button"
@@ -43,7 +46,8 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
         accessibilityState={{ expanded }}
         onPress={() => setExpanded((value) => !value)}
         style={({ pressed }) => [styles.detailsToggle, { borderColor: theme.border, opacity: pressed ? 0.65 : 1 }]}>
-        <AppText style={{ color: theme.primary, fontWeight: '700' }}>{expanded ? 'Ocultar endereço −' : 'Ver endereço +'}</AppText>
+        <AppText style={{ color: theme.primary, fontWeight: '700' }}>{expanded ? 'Ocultar endereço' : 'Ver endereço e parada'}</AppText>
+        <AppText muted>{expanded ? '−' : '+'}</AppText>
       </Pressable>
       {expanded ? (
         <View style={[styles.details, { backgroundColor: theme.surfaceAlt }]}>
@@ -67,11 +71,13 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
 }
 
 const styles = StyleSheet.create({
+  card: { gap: 9, padding: 13, borderRadius: 16 },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  avatar: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  avatar: { width: 42, height: 42, borderRadius: 21, justifyContent: 'center', alignItems: 'center' },
   identity: { flex: 1, gap: 2, minWidth: 0 },
   name: { fontWeight: '700', fontSize: 15 },
-  status: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
-  detailsToggle: { minHeight: 44, paddingVertical: 10, borderTopWidth: 1, justifyContent: 'center' },
+  status: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingLeft: 53 },
+  eventTime: { fontSize: 12 },
+  detailsToggle: { minHeight: 40, paddingVertical: 8, borderTopWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   details: { padding: 12, borderRadius: 12, gap: 5 },
 });
