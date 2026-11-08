@@ -50,7 +50,11 @@ export interface Trip {
 }
 export interface AccessEvent {
   id: number; passenger_id: number; vehicle_id: number; action: AccessAction; created_at: string;
+  event_uuid: string | null; trip_id: number | null; actor_id: number | null; occurred_at: string | null;
+  review_status: 'accepted' | 'pending' | 'rejected'; review_reason: string | null;
 }
+export interface AccessEventReview { id: number; event_id: number; reviewer_id: number; decision: 'accepted' | 'rejected'; reason: string; created_at: string }
+export interface TripCommunication { trip_id: number; received_at: string | null; status: 'recent' | 'stale' | 'unknown'; stale_after_seconds: number }
 export interface VehicleLocation {
   id: number; trip_id: number; latitude: number; longitude: number;
   speed_kmh: number | null; source: 'gps' | 'demo'; recorded_at: string;

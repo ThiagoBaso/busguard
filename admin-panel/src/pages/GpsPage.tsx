@@ -2,16 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { CircleMarker, MapContainer, Marker, Pane, Polyline, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import { apiFetch } from '../api';
+import { communicationIsRecent, communicationTime } from '../communication';
 import { Button, EmptyState, LoadingState, PageTitle, Panel, Pill, SelectInput, formatAddress, formatDate, formatTime, tripStatusLabel, tripStatusTone } from '../components';
 import { usePlannedRoute } from '../RouteMap';
 import { useApiData } from '../hooks';
 import { completedMapStops } from '../mapProgress';
-import type { AccessEvent, Address, Driver, LiveVehicleLocation, NextStopRoute, Route, RoutePassenger, RouteStop, Trip, User, Vehicle, VehicleLocation } from '../types';
+import type { AccessEvent, Address, Driver, LiveVehicleLocation, NextStopRoute, Route, RoutePassenger, RouteStop, Trip, TripCommunication, User, Vehicle, VehicleLocation } from '../types';
 import type { ScreenProps } from '../pageTypes';
 
-type GpsData = { trips: Trip[]; locations: LiveVehicleLocation[]; vehicles: Vehicle[]; routes: Route[]; drivers: Driver[]; users: User[]; stops: RouteStop[]; addresses: Address[]; assignments: RoutePassenger[]; events: AccessEvent[] };
+type GpsData = { trips: Trip[]; locations: LiveVehicleLocation[]; vehicles: Vehicle[]; routes: Route[]; drivers: Driver[]; users: User[]; stops: RouteStop[]; addresses: Address[]; assignments: RoutePassenger[]; events: AccessEvent[]; communications: TripCommunication[] };
 const loadGps = async (): Promise<GpsData> => {
-  const [trips, locations, vehicles, routes, drivers, users, stops, addresses, assignments, events] = await Promise.all([
+  const [trips, locations, vehicles, routes, drivers, users, stops, addresses, assignments, events, communications] = await Promise.all([
     apiFetch<Trip[]>('/admin/trips?limit=500'),
     apiFetch<LiveVehicleLocation[]>('/admin/vehicle-locations?limit=500'),
     apiFetch<Vehicle[]>('/admin/vehicles?limit=500'),
@@ -22,14 +23,15 @@ const loadGps = async (): Promise<GpsData> => {
     apiFetch<Address[]>('/admin/addresses?limit=500'),
     apiFetch<RoutePassenger[]>('/admin/route-passengers?limit=500'),
     apiFetch<AccessEvent[]>('/admin/access-events?limit=500'),
+    apiFetch<TripCommunication[]>('/admin/trip-communications'),
   ]);
-  return { trips, locations, vehicles, routes, drivers, users, stops, addresses, assignments, events };
+  return { trips, locations, vehicles, routes, drivers, users, stops, addresses, assignments, events, communications };
 };
 const busIcon = L.divIcon({ className: 'bus-location-marker', html: '<span aria-hidden="true">🚌</span>', iconSize: [42, 42], iconAnchor: [21, 21] });
 const mapTileUrl = import.meta.env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 export function GpsPage({ selectedTripId }: ScreenProps) {
-  const query = useApiData(loadGps, ['trips', 'vehicle_locations', 'vehicles', 'routes', 'drivers', 'users', 'route_stops', 'addresses', 'route_passengers', 'access_events']);
+  const query = useApiData(loadGps, ['trips', 'vehicle_locations', 'vehicles', 'routes', 'drivers', 'users', 'route_stops', 'addresses', 'route_passengers', 'access_events', 'trip_communications']);
   const data = query.data;
   const [tripId, setTripId] = useState<number | null>(selectedTripId);
   const appliedSelection = useRef<number | null>(null);
@@ -59,9 +61,11 @@ export function GpsPage({ selectedTripId }: ScreenProps) {
   }, [selectedTripId, tripById, tripId, trips]);
 
   const selectedTrip = tripId == null ? undefined : tripById.get(tripId);
+  const communication = data?.communications.find((item) => item.trip_id === selectedTrip?.id);
+  const communicationRecent = communicationIsRecent(communication, now, query.error);
   const selectedStops = (data?.stops ?? []).filter((stop) => stop.route_id === selectedTrip?.route_id).sort((a, b) => a.sequence - b.sequence);
   const selectedAssignments = (data?.assignments ?? []).filter((assignment) => assignment.route_id === selectedTrip?.route_id);
-  const completedStopIds = completedMapStops(selectedStops, selectedAssignments, data?.events ?? [], selectedTrip?.vehicle_id ?? null, selectedTrip?.started_at ?? null);
+  const completedStopIds = completedMapStops(selectedStops, selectedAssignments, data?.events ?? [], selectedTrip?.vehicle_id ?? null, selectedTrip?.started_at ?? null, selectedTrip?.id ?? null);
   const planned = usePlannedRoute(selectedTrip?.route_id ?? null, selectedStops, data?.addresses ?? []);
   const liveLocation = data?.locations.find((location) => location.trip_id === selectedTrip?.id);
   const latestHistoryPoint = history.find((point) => point.trip_id === selectedTrip?.id);
@@ -123,6 +127,7 @@ export function GpsPage({ selectedTripId }: ScreenProps) {
 
   return <>
     <PageTitle title="Rastreamento GPS" description="Acompanhe a última posição recebida dos veículos em viagem." action={<Button variant="quiet" onClick={() => void query.reload().catch(() => undefined)}>↻ Atualizar</Button>} />
+    {query.error && data ? <div className="inline-error">Não foi possível atualizar. Os dados exibidos são da consulta anterior.</div> : null}
     {query.loading && !data ? <LoadingState /> : query.error && !data ? <div className="inline-error">{query.error} <Button variant="plain" onClick={() => void query.reload()}>Tentar novamente</Button></div> : data ? <>
       <div className="gps-toolbar"><label className="gps-trip-picker"><span>VIAGEM</span><SelectInput value={tripId ?? ''} onChange={(event) => setTripId(event.target.value ? Number(event.target.value) : null)}><option value="">Selecionar viagem</option>{trips.map((item) => <option key={item.id} value={item.id}>#{String(item.id).padStart(3, '0')} · {routeById.get(item.route_id)?.name || `Rota ${item.route_id}`} · {tripStatusLabel(item.status)}</option>)}</SelectInput></label><span className="gps-auto-refresh"><span className="live-dot" />Atualização automática quando há alterações</span></div>
       {!selectedTrip ? <Panel><EmptyState title="Nenhuma viagem cadastrada" message="As viagens e as posições recebidas serão exibidas aqui." /></Panel> : <div className="gps-layout">
@@ -137,7 +142,8 @@ export function GpsPage({ selectedTripId }: ScreenProps) {
         </Panel>
         <Panel title="Informações da viagem" subtitle={`Viagem #${String(selectedTrip.id).padStart(3, '0')}`} className="gps-details-panel">
           <div className="gps-status-row"><span>Status da viagem</span><Pill tone={tripStatusTone(selectedTrip.status)}>{tripStatusLabel(selectedTrip.status)}</Pill></div>
-          <dl className="gps-detail-list"><div><dt>Motorista</dt><dd>{driverName || `Motorista ${selectedTrip.driver_id}`}</dd></div><div><dt>Veículo</dt><dd>{vehicle ? `${vehicle.model} · ${vehicle.plate}` : `Veículo ${selectedTrip.vehicle_id}`}</dd></div><div><dt>Rota</dt><dd>{route?.name || `Rota ${selectedTrip.route_id}`}</dd></div><div><dt>Data e horário</dt><dd>{formatDate(selectedTrip.trip_date)} · {selectedTrip.scheduled_time?.slice(0, 5) || 'Sem horário previsto'}</dd></div><div><dt>Passageiros a bordo</dt><dd>{passengerCount == null ? '—' : `${passengerCount}${vehicle ? ` / ${vehicle.capacity}` : ''}`}</dd></div><div><dt>Velocidade</dt><dd>{currentLocation?.speed_kmh == null ? '—' : `${Math.round(currentLocation.speed_kmh)} km/h`}</dd></div><div><dt>Última atualização</dt><dd>{currentLocation ? formatTime(currentLocation.recorded_at) : 'Aguardando sinal'}</dd></div></dl>
+          <div className="gps-status-row"><span>Última comunicação do app</span><Pill tone={communicationRecent ? 'success' : 'warning'}>{communication?.received_at ? `${communicationTime(communication.received_at)}${communicationRecent ? '' : ' · sem atualização recente'}` : 'Sem comunicação recebida'}</Pill></div>
+          <dl className="gps-detail-list"><div><dt>Motorista</dt><dd>{driverName || `Motorista ${selectedTrip.driver_id}`}</dd></div><div><dt>Veículo</dt><dd>{vehicle ? `${vehicle.model} · ${vehicle.plate}` : `Veículo ${selectedTrip.vehicle_id}`}</dd></div><div><dt>Rota</dt><dd>{route?.name || `Rota ${selectedTrip.route_id}`}</dd></div><div><dt>Data e horário</dt><dd>{formatDate(selectedTrip.trip_date)} · {selectedTrip.scheduled_time?.slice(0, 5) || 'Sem horário previsto'}</dd></div><div><dt>Embarques confirmados a bordo</dt><dd>{passengerCount == null ? '—' : `${passengerCount}${vehicle ? ` / ${vehicle.capacity}` : ''}`}</dd></div><div><dt>Velocidade</dt><dd>{currentLocation?.speed_kmh == null ? '—' : `${Math.round(currentLocation.speed_kmh)} km/h`}</dd></div><div><dt>Última posição GPS</dt><dd>{currentLocation ? formatTime(currentLocation.recorded_at) : 'Aguardando sinal'}</dd></div></dl>
           <div className="gps-signal-note"><span className={`live-dot ${currentLocation && !isStale && !isDemo ? '' : 'live-dot-muted'}`} /><span>{!currentLocation ? 'Sem sinal GPS recebido' : isDemo ? 'GPS simulado para demonstração' : isStale ? 'Posição sem atualização recente' : 'Sinal GPS recebido'}</span></div>
           <small className="panel-hint">O ETA em tempo real não é calculado; o trajeto planejado não considera trânsito.</small>
         </Panel>

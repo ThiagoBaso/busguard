@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { randomUUID } from 'expo-crypto';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import AlunoItem from '@/components/AlunoItem';
@@ -8,7 +9,7 @@ import { useAppTheme } from '@/constants/theme';
 import { useTripQuery } from '@/hooks/useTripQuery';
 import { useSession } from '@/services/session';
 import { getApiErrorMessage } from '@/services/apiClient';
-import { BoardingStudent, getDriverTrip, updateBoardingStatus } from '@/services/tripService';
+import { BoardingStudent, type BoardingSubmission, getDriverTrip, updateBoardingStatus } from '@/services/tripService';
 import { useLocationSharing } from '@/services/locationSharing';
 import { useDriverTripSnapshot } from '@/services/driverTripSync';
 import TripSummary from '@/components/TripSummary';
@@ -42,10 +43,13 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   const query = useTripQuery(getDriverTrip, allowed && pendingId === null);
   const trip = useDriverTripSnapshot(user?.id ?? null, query.data, query.errorStatus);
   const pending = useRef(false);
+  const submissions = useRef(new Map<string, BoardingSubmission>());
   const controller = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const focused = useRef(false);
   const sharing = useLocationSharing();
+
+  useEffect(() => { submissions.current.clear(); }, [user?.id]);
 
   useEffect(() => {
     mounted.current = true;
@@ -67,7 +71,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     const term = normalize(search.trim());
     return (trip?.students ?? []).filter((student) => (
       (!term || normalize(student.name).includes(term)) &&
-      (filter === 'all' || (filter === 'boarded' ? student.checkedIn : !student.checkedIn && student.status !== 'absent'))
+      (filter === 'all' || (filter === 'boarded' ? student.checkedIn : !student.checkedIn && student.status === 'waiting'))
     ));
   }, [trip, search, filter]);
 
@@ -88,7 +92,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
 
   const nextStop = useMemo(() => {
     const nextSequence = nextBoardingStopSequence(trip?.students ?? []);
-    const upcoming = (trip?.students ?? []).filter(student => student.stopOrder === nextSequence);
+    const upcoming = (trip?.students ?? []).filter(student => student.stopOrder === nextSequence && !(student.boarded ?? student.checkedIn) && student.status !== 'absent');
     const first = upcoming[0];
     if (!first) return null;
     const stopName = first.stopName.trim() || 'Parada sem identificação';
@@ -110,7 +114,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   }
 
   async function handleBoardingChange(student: BoardingStudent, checkedIn: boolean) {
-    if (!trip || pending.current || query.error || !focused.current) return;
+    if (!trip || student.pendingReview || pending.current || query.error || !focused.current) return;
     if (!Number.isSafeInteger(trip.id) || trip.id <= 0 || !Number.isSafeInteger(Number(student.id)) || Number(student.id) <= 0) {
       setFeedback({ tone: 'error', message: 'Não foi possível identificar a viagem ou o aluno. Atualize a consulta.' });
       return;
@@ -123,21 +127,25 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     controller.current = operation;
     let confirmed = false;
     try {
-      await updateBoardingStatus(trip.id, student.id, checkedIn, operation.signal);
+      const key = `${trip.id}:${student.id}:${checkedIn}`;
+      const submission = submissions.current.get(key) ?? { eventUuid: randomUUID(), occurredAt: new Date().toISOString() };
+      submissions.current.set(key, submission);
+      const result = await updateBoardingStatus(trip.id, student.id, checkedIn, operation.signal, submission);
+      submissions.current.delete(key);
       confirmed = true;
       const refreshed = await query.refresh();
       if (mounted.current && focused.current) {
         setFeedback({
           tone: refreshed ? 'info' : 'error',
           message: refreshed
-            ? `${checkedIn ? 'Embarque' : 'Desembarque'} de ${student.name} confirmado.`
-            : 'O registro foi confirmado, mas a atualização da lista falhou. Consulte a viagem novamente antes de registrar outra alteração.',
+            ? result.event.review_status === 'pending' ? `Registro de ${student.name} recebido e aguardando revisão administrativa.` : result.event.review_status === 'rejected' ? `O registro de ${student.name} foi rejeitado na revisão. Consulte a administração.` : `${checkedIn ? 'Embarque' : 'Desembarque'} de ${student.name} confirmado.`
+            : 'O registro foi recebido, mas a atualização da lista falhou. Consulte a viagem novamente antes de registrar outra alteração.',
         });
       }
     } catch (caught) {
       if (mounted.current && focused.current && !operation.signal.aborted) {
         setFeedback({ tone: 'error', message: confirmed
-          ? 'O registro foi confirmado, mas a atualização falhou. Atualize a viagem.'
+          ? 'O registro foi recebido, mas a atualização falhou. Atualize a viagem.'
           : getApiErrorMessage(caught, checkedIn ? 'confirmar o embarque' : 'confirmar o desembarque') });
         query.cancel();
       }
@@ -149,9 +157,10 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   }
 
   const boarded = trip?.students.filter((student) => student.checkedIn).length ?? 0;
-  const waiting = trip?.students.filter((student) => !student.checkedIn && student.status !== 'absent').length ?? 0;
+  const waiting = trip?.students.filter((student) => student.status === 'waiting').length ?? 0;
   const absent = trip?.students.filter((student) => student.status === 'absent').length ?? 0;
-  const eligibleStudents = boarded + waiting;
+  const inReview = trip?.students.filter((student) => student.pendingReview).length ?? 0;
+  const eligibleStudents = boarded + waiting + inReview;
   const boardingProgress = eligibleStudents ? Math.round(boarded / eligibleStudents * 100) : 0;
   const failureMessage = query.errorStatus === 403
     ? 'Seu perfil não tem acesso a esta viagem. Confira sua conta ou procure a administração.'
@@ -239,7 +248,9 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
               </View>
             </View>
             <AppText muted>
-              {waiting
+              {inReview
+                ? `${inReview} ${inReview === 1 ? 'registro aguarda' : 'registros aguardam'} revisão administrativa.`
+                : waiting
                 ? `${waiting} ${waiting === 1 ? 'aluno aguarda' : 'alunos aguardam'} confirmação de embarque.`
                 : eligibleStudents
                   ? 'Todos os embarques foram confirmados.'
@@ -257,14 +268,14 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
               </AppText>
               <AppText muted>
                 {nextStop
-                  ? nextStop.students.length === 1
+                  ? nextStudent?.pendingReview ? 'Há um registro nesta parada aguardando revisão administrativa.' : nextStop.students.length === 1
                     ? `${nextStudent?.name} aguarda confirmação de embarque nesta parada.`
                     : `${nextStop.students.length} alunos aguardam confirmação de embarque nesta parada.`
                   : trip.students.length
                     ? 'Não há alunos aguardando confirmação de embarque.'
                     : 'Nenhum aluno está vinculado a esta rota.'}
               </AppText>
-              {nextStudent ? (
+              {nextStudent && !nextStudent.pendingReview ? (
                 <Button
                   label={pendingId === nextStudent.id ? `Confirmando embarque de ${nextStudent.name}…` : `Validar embarque de ${nextStudent.name}`}
                   accessibilityLabel={`${pendingId === nextStudent.id ? 'Confirmando embarque de' : 'Validar embarque de'} ${nextStudent.name}`}

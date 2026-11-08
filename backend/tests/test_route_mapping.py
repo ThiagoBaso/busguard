@@ -65,7 +65,7 @@ class RouteMappingTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_students_follow_stop_order_and_share_home_stop(self):
-        students = _build_boarding_students(self.db, SimpleNamespace(route_id=1, vehicle_id=1, started_at=None))
+        students = _build_boarding_students(self.db, SimpleNamespace(id=1, route_id=1, vehicle_id=1, started_at=None, finished_at=None))
         self.assertEqual([(student.id, student.stopOrder) for student in students], [("3", 1), ("1", 2), ("2", 2)])
 
     def test_stop_must_belong_to_the_same_route(self):
@@ -171,7 +171,7 @@ class RouteMappingTests(unittest.TestCase):
         self.db.add(RouteStop(id=4, route_id=1, address_id=3, sequence=3))
         self.db.add(Trip(id=1, route_id=1, vehicle_id=1, driver_id=1, trip_date=date.today(), started_at=datetime(2026, 10, 8, 8), status='in_progress'))
         self.db.add(VehicleLocation(id=1, trip_id=1, latitude=-22.2, longitude=-49.9, source='gps'))
-        self.db.add_all([AccessEvent(id=index, passenger_id=passenger_id, vehicle_id=1, action='entry', created_at=datetime(2026, 10, 8, 8, index)) for index, passenger_id in enumerate((1, 2, 3), start=1)])
+        self.db.add_all([AccessEvent(id=index, trip_id=1, passenger_id=passenger_id, vehicle_id=1, action='entry', created_at=datetime(2026, 10, 8, 8, index)) for index, passenger_id in enumerate((1, 2, 3), start=1)])
         self.db.commit()
         result = calculate_admin_next_stop_route(self.db, 1)
         self.assertEqual((result['stop_id'], result['stop_sequence']), (4, 3))

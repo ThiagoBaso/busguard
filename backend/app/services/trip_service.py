@@ -1,6 +1,7 @@
-from datetime import date
+from datetime import date, datetime, timezone
+from uuid import uuid4
 
-from sqlalchemy import and_, case
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session, aliased
 
 from app.models.access_events import AccessEvent
@@ -17,8 +18,10 @@ from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
+from app.models.trip_communications import TripCommunication
 from app.schemas.mobile_trips import BoardingStudent
 from app.schemas.vehicle_locations import VehicleLocationCreate
+from app.services.communication_status import describe_communication
 
 
 class CurrentTripNotFoundError(Exception):
@@ -87,6 +90,22 @@ def get_authorized_active_trip(db: Session, trip_id: int, user_id: int, role: st
     return row[0]
 
 
+def record_driver_communication(db: Session, user_id: int) -> TripCommunication:
+    row = _authorized_trip_query(db, user_id, 'driver').with_for_update().first()
+    if not row:
+        raise CurrentTripNotFoundError
+    trip = row[0]
+    communication = db.get(TripCommunication, trip.id)
+    if communication is None:
+        communication = TripCommunication(trip_id=trip.id, user_id=user_id)
+        db.add(communication)
+    communication.user_id = user_id
+    communication.received_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    db.commit()
+    db.refresh(communication)
+    return communication
+
+
 def get_driver_trip_map(db: Session, trip_id: int, user_id: int, role: str) -> dict:
     trip = get_authorized_active_trip(db, trip_id, user_id, role)
     stops = (db.query(RouteStop, Address).join(Address, Address.id == RouteStop.address_id)
@@ -151,9 +170,14 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
     passenger = db.get(Passenger, passenger_link.passengers_id)
     if passenger is None:
         raise CurrentTripNotFoundError
-    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id, trip.started_at)
-    child_status = "A bordo" if _event_has_action(latest_event, "entry") else "Aguardando embarque"
+    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_link.passengers_id, trip.started_at, trip.id, trip.finished_at)
+    pending = _has_pending_event(db, trip.id, passenger_link.passengers_id)
+    child_status = "A bordo" if _event_has_action(latest_event, "entry") else "Desembarcou" if _event_has_action(latest_event, "exit") else "Sem registro confirmado"
+    if pending:
+        child_status = "Precisa de confirmação"
     last_update = latest_event.created_at.strftime("%H:%M") if latest_event else "--:--"
+    communication = db.get(TripCommunication, trip.id)
+    communication_info = describe_communication(communication.received_at if communication else None)
 
     return {
         "id": trip.id,
@@ -162,6 +186,9 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
         "childName": passenger.name,
         "childStatus": child_status,
         "lastUpdate": last_update,
+        "lastEventAt": (latest_event.occurred_at or latest_event.created_at).isoformat() + 'Z' if latest_event else None,
+        "lastCommunication": communication_info['received_at'],
+        "communicationStatus": communication_info['status'],
         "driverName": driver_user.name,
         "vehicleLabel": f"{vehicle.model} - {vehicle.plate}",
     }
@@ -173,7 +200,7 @@ def set_boarding_status(
 ) -> dict:
     authorized_trip = _authorized_trip_query(db, user_id, role, active_only=False).filter(
         Trip.id == trip_id
-    ).first()
+    ).with_for_update().first()
     if not authorized_trip:
         raise CurrentTripNotFoundError
 
@@ -195,7 +222,10 @@ def set_boarding_status(
     if not route_passenger:
         raise PassengerNotInTripError
 
-    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_id, trip.started_at)
+    if _has_pending_event(db, trip.id, passenger_id):
+        raise ValueError('Existe um evento deste passageiro aguardando revisão.')
+
+    latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_id, trip.started_at, trip.id, trip.finished_at, lock=True)
     next_action = "entry" if checked_in else "exit"
 
     if _event_has_action(latest_event, next_action):
@@ -210,6 +240,11 @@ def set_boarding_status(
         passenger_id=passenger_id,
         vehicle_id=trip.vehicle_id,
         action=next_action,
+        event_uuid=str(uuid4()),
+        trip_id=trip.id,
+        actor_id=user_id,
+        occurred_at=datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0),
+        review_status='accepted',
     )
     db.add(event)
     db.commit()
@@ -270,8 +305,9 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
 
     for index, (passenger, home_address, stop, pickup_address) in enumerate(passengers, start=1):
         address = pickup_address or home_address
-        latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at)
-        checked_in = _event_has_action(latest_event, "entry")
+        latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at, trip.id, trip.finished_at)
+        pending = _has_pending_event(db, trip.id, passenger.id)
+        checked_in = _event_has_action(latest_event, "entry") and not pending
         boarded = _passenger_boarded_for_trip(db, trip, passenger.id)
         students.append(
             BoardingStudent(
@@ -283,7 +319,8 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
                 address=f"{address.rua}, {address.numero}",
                 checkedIn=checked_in,
                 boarded=boarded,
-                status="present" if checked_in else "waiting",
+                pendingReview=pending,
+                status="review" if pending else "present" if checked_in else "waiting",
                 time=latest_event.created_at.strftime("%H:%M") if latest_event and checked_in else None,
             )
         )
@@ -296,16 +333,27 @@ def _latest_event_for_passenger(
     vehicle_id: int,
     passenger_id: int,
     started_at=None,
+    trip_id=None,
+    finished_at=None,
+    lock=False,
 ) -> AccessEvent | None:
     query = db.query(AccessEvent).filter(
         AccessEvent.vehicle_id == vehicle_id,
         AccessEvent.passenger_id == passenger_id,
+        AccessEvent.review_status == 'accepted',
     )
-
-    if started_at:
+    if trip_id is not None:
+        query = query.filter(AccessEvent.trip_id == trip_id)
+    elif started_at:
         query = query.filter(AccessEvent.created_at >= started_at)
+    if lock:
+        query = query.with_for_update()
+    return query.order_by(func.coalesce(AccessEvent.occurred_at, AccessEvent.created_at).desc(), AccessEvent.id.desc()).first()
 
-    return query.order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc()).first()
+
+def _has_pending_event(db: Session, trip_id: int, passenger_id: int) -> bool:
+    return db.query(AccessEvent.id).filter(AccessEvent.trip_id == trip_id, AccessEvent.passenger_id == passenger_id,
+                                           AccessEvent.review_status == 'pending').first() is not None
 
 
 def _event_has_action(event: AccessEvent | None, action: str) -> bool:
@@ -313,12 +361,14 @@ def _event_has_action(event: AccessEvent | None, action: str) -> bool:
 
 
 def _passenger_boarded_for_trip(db: Session, trip: Trip, passenger_id: int) -> bool:
+    if _has_pending_event(db, trip.id, passenger_id):
+        return False
     query = db.query(AccessEvent).filter(
         AccessEvent.vehicle_id == trip.vehicle_id,
         AccessEvent.passenger_id == passenger_id,
+        AccessEvent.review_status == 'accepted',
+        AccessEvent.trip_id == trip.id,
     )
-    if trip.started_at:
-        query = query.filter(AccessEvent.created_at >= trip.started_at)
     return any(_event_has_action(event, "entry") for event in query.all())
 
 

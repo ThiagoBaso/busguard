@@ -68,7 +68,7 @@ export default function ConfigScreen() {
               onPress={() => router.push({ pathname: '/modal', params: { section: 'about' } })}
               style={({ pressed }) => [styles.row, { opacity: pressed || loading ? 0.6 : 1 }]}>
               <View style={[styles.rowIcon, { backgroundColor: theme.surfaceAlt }]}><AppIcon name="info" size={22} color={theme.primary} /></View>
-              <View style={styles.rowText}><AppText style={styles.rowTitle}>Sobre o aplicativo</AppText><AppText muted style={styles.rowCaption}>Conheça o Rota Escolar Segura</AppText></View>
+              <View style={styles.rowText}><AppText style={styles.rowTitle}>Sobre o aplicativo</AppText><AppText muted style={styles.rowCaption}>Conheça o BusGuard</AppText></View>
               <AppIcon name="arrow" size={19} color={theme.muted} />
             </Pressable>
           </Card>

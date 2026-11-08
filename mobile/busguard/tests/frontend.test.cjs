@@ -349,9 +349,9 @@ test('rota até a parada envia posição e identificador no corpo da requisiçã
   assert.deepEqual(JSON.parse(calls[0].options.body), { stop_id: 20, latitude: -22.21, longitude: -49.94 });
 });
 
-test('embarque rejeita IDs inválidos sem chamada e preserva checked_in=false no JSON', async () => {
+test('embarque rejeita IDs inválidos e envia identificação e horário do evento', async () => {
   const calls = [];
-  const expected = { passenger_id: 8, checked_in: false, event_id: 99, duplicated: false };
+  const expected = { event: { id: 99, review_status: 'accepted' }, duplicated: false };
   const service = loadModule('services/tripService.ts', {
     '@/services/apiClient': { apiFetch: async (url, options) => { calls.push({ url, options }); return expected; } },
   });
@@ -360,9 +360,10 @@ test('embarque rejeita IDs inválidos sem chamada e preserva checked_in=false no
   }
   assert.equal(calls.length, 0);
   const signal = new AbortController().signal;
-  assert.equal(await service.updateBoardingStatus(3, '8', false, signal), expected);
-  assert.equal(calls[0].url, '/driver/trips/3/boarding');
+  const submission = { eventUuid: 'c2e2db32-3e63-49c1-ac5d-fce289888653', occurredAt: '2026-11-08T10:00:00.000Z' };
+  assert.equal(await service.updateBoardingStatus(3, '8', false, signal, submission), expected);
+  assert.equal(calls[0].url, '/driver/trips/3/events');
   assert.equal(calls[0].options.method, 'POST');
   assert.equal(calls[0].options.signal, signal);
-  assert.deepEqual(JSON.parse(calls[0].options.body), { passenger_id: 8, checked_in: false });
+  assert.deepEqual(JSON.parse(calls[0].options.body), { passenger_id: 8, action: 'exit', event_uuid: submission.eventUuid, occurred_at: submission.occurredAt });
 });

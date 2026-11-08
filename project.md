@@ -54,6 +54,10 @@ Confira os manifests antes de atualizar bibliotecas ou assumir versões efetivas
 | `GET /driver/trips/{trip_id}/map` e `/map/geometry` | Paradas, última posição e trajeto fictício do OSRM, somente para o operador vinculado à viagem ativa. |
 | `POST /driver/trips/{trip_id}/map/next-stop` | Calcula até parada fictícia da viagem autorizada; envia ao OSRM a posição recebida, inclusive GPS real. |
 | `POST /driver/trips/{trip_id}/boarding` | Operador vinculado; recebe `passenger_id` positivo e `checked_in`. |
+| `POST /driver/trips/{trip_id}/events` | Operador vinculado; recebe UUID, passageiro, ação e horário com fuso. Reenvios idênticos retornam o mesmo evento; divergências ficam pendentes de revisão. |
+| `POST /driver/trips/current/heartbeat` | Motorista vinculado; registra comunicação recebida enquanto o aplicativo está em primeiro plano, independentemente do GPS. |
+| `GET /admin/trip-communications` | Admin; mostra a última comunicação recebida e a situação de atualização. |
+| `POST /admin/access-events/{id}/review` | Admin; aceita ou rejeita evento pendente com motivo obrigatório e registro do revisor. |
 | `GET /responsible/children/current-trip` | Responsável com vínculo ao passageiro; admin também é aceito pela rota. |
 | `/admin/...` | Cadastros e vínculos; requer perfil admin. |
 | `GET /admin/routes/{route_id}/geometry` | Calcula no OSRM público apenas rotas cujas coordenadas são fictícias. |
@@ -71,6 +75,8 @@ No mapa da viagem, cada parada inclui `completed` quando todos os alunos associa
 O esquema cobre usuários, passageiros, responsáveis, endereços, motoristas, CNHs, veículos, rotas, paradas, vínculos de passageiros a rotas, viagens, eventos de acesso e histórico de posições GPS. Os estados de viagem são `scheduled`, `in_progress`, `completed` e `cancelled`.
 
 `database/init.sql` reúne esquema, atualizações para volumes anteriores e dados fictícios de Marília/SP. Quando o serviço `megamock` inicia, o Compose executa esse arquivo: cria ou atualiza as tabelas e substitui os registros de `app_db` em uma transação. Isso também acontece em volumes existentes; nunca inicie o serviço se precisar preservar dados inseridos localmente. Endereços possuem coordenadas opcionais e origem `demo` ou `manual`; passageiros podem ser vinculados a uma parada da própria rota. As posições GPS de demonstração são identificadas pela origem `demo`; as posições recebidas do aplicativo usam `gps`. API, MySQL, megamock e painel usam `restart: unless-stopped` para voltarem quando o Docker iniciar. O ORM e o SQL ainda têm diferenças de constraints; Alembic não está configurado.
+
+A migração aditiva `python -m app.scripts.migrate_access_events_v1` é separada da fixture, pode ser repetida e não apaga registros. No Compose de demonstração, a API a executa após a carga do megamock, antes de iniciar o servidor. Para um banco existente, faça backup e execute a migração explicitamente antes de atualizar a API; não execute `init.sql` para migrar dados reais. Eventos legados permanecem sem viagem e autor quando não há vínculo registrado, e não são usados para inferir a situação de uma viagem.
 
 As oito rotas da fixture usam pontos simulados sobre vias mapeadas de Marília; têm nove paradas e cerca de 2,5 a 4,7 km cada. Os nomes das vias vêm do mapa, mas números, CEPs, passageiros e escolas são fictícios; as coordenadas não identificam residências ou escolas reais.
 
@@ -90,8 +96,9 @@ Para o painel, em `admin-panel`, use `npm test`, `npm run typecheck` e `npm run 
 
 ## Limitações conhecidas
 
-- Não há migrações versionadas. Alterar o bootstrap não atualiza bancos em volumes existentes.
-- Eventos de embarque não têm vínculo explícito com viagem/autor e a deduplicação não é atômica sob concorrência.
+- A migração de eventos v1 é aditiva e específica do MySQL; ainda não há uma estrutura geral de migrações versionadas para os demais modelos.
+- Registros legados sem viagem explícita não determinam a situação da viagem; os horários informados pelo cliente não provam quando um evento ocorreu. Eventos tardios, repetidos ou fora de ordem são revisados manualmente. Não há fila offline persistente ou autenticação offline; o UUID de uma tentativa é mantido em memória apenas enquanto a tela existir.
+- A comunicação reportada depende do app do motorista em primeiro plano e não prova que todos os eventos ou posições foram recebidos. O limite de alerta é configurável por `COMMUNICATION_STALE_SECONDS` (padrão 300 segundos).
 - O OSRM público recebe paradas fictícias e, para o trajeto até a próxima parada, a posição do veículo, inclusive GPS real, conforme escolha do usuário. Coordenadas de paradas manuais não são enviadas; linhas diretas são apenas referências e o GPS não calcula ETA em tempo real.
 - O compartilhamento GPS é opcional e funciona em primeiro plano, inclusive ao trocar entre as abas; é interrompido quando o app vai para segundo plano, a sessão termina ou a viagem deixa de estar ativa. O app não rastreia em segundo plano.
 - O CRUD administrativo permite alterar alguns estados e horários sem passar pelas ações de transição.

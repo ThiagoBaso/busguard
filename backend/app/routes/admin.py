@@ -1,10 +1,12 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.addresses import Address
-from app.models.access_events import AccessEvent
+from app.models.access_events import AccessEvent, AccessEventReview
 from app.models.cnh import Cnh
 from app.models.driver_vehicles import DriverVehicle
 from app.models.drivers import Driver
@@ -19,8 +21,9 @@ from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
+from app.models.trip_communications import TripCommunication
 from app.schemas.addresses import AddressCreate, AddressRead, AddressUpdate
-from app.schemas.access_events import AccessEventRead
+from app.schemas.access_events import AccessEventRead, EventReviewCreate, EventReviewRead
 from app.schemas.cnh import CnhCreate, CnhRead, CnhUpdate
 from app.schemas.driver_vehicles import DriverVehicleCreate, DriverVehicleRead, DriverVehicleUpdate
 from app.schemas.drivers import DriverCreate, DriverRead, DriverUpdate
@@ -72,15 +75,38 @@ from app.services.routing_service import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+@router.get('/trip-communications')
+def list_trip_communications(db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    from app.services.communication_status import describe_communication
+    rows = (db.query(TripCommunication).join(Trip, Trip.id == TripCommunication.trip_id)
+            .filter(Trip.status == 'in_progress').all())
+    return [{'trip_id': row.trip_id, **describe_communication(row.received_at)} for row in rows]
+
+
 @router.get("/access-events", response_model=list[AccessEventRead])
-def list_access_events(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return (
-        db.query(AccessEvent)
-        .order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+def list_access_events(limit: int = 100, offset: int = 0, review_status: Literal['pending', 'accepted', 'rejected'] | None = None, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    query = db.query(AccessEvent)
+    if review_status:
+        query = query.filter(AccessEvent.review_status == review_status)
+    if review_status == 'pending':
+        query = query.order_by(AccessEvent.created_at.asc(), AccessEvent.id.asc())
+    else:
+        query = query.order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc())
+    return query.offset(max(offset, 0)).limit(min(max(limit, 1), 500)).all()
+
+
+@router.get('/access-event-reviews', response_model=list[EventReviewRead])
+def list_event_reviews(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    return db.query(AccessEventReview).order_by(AccessEventReview.id.desc()).offset(offset).limit(min(max(limit, 1), 500)).all()
+
+
+@router.post('/access-events/{event_id}/review', response_model=AccessEventRead)
+def resolve_access_event(event_id: int, data: EventReviewCreate, db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    from app.services.boarding_events import EventReviewError, review_event
+    try:
+        return review_event(db, event_id, current_user['id'], data.decision, data.reason)
+    except EventReviewError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/vehicle-locations", response_model=list[LiveVehicleLocationRead])

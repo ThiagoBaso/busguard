@@ -51,7 +51,7 @@ export function RoutesPage({ notify }: ScreenProps) {
   const selectedPassengerLinks = (data?.assignments ?? []).filter((link) => link.route_id === selected?.id && link.active);
   const liveTrip = (data?.trips ?? []).filter((trip) => trip.route_id === selected?.id && trip.status === 'in_progress').sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))[0] ?? null;
   const liveLocation = liveTrip ? data?.locations.find((location) => location.trip_id === liveTrip.id) : undefined;
-  const completedStops = completedMapStops(selectedStops, selectedPassengerLinks, data?.events ?? [], liveTrip?.vehicle_id ?? null, liveTrip?.started_at ?? null);
+  const completedStops = completedMapStops(selectedStops, selectedPassengerLinks, data?.events ?? [], liveTrip?.vehicle_id ?? null, liveTrip?.started_at ?? null, liveTrip?.id ?? null);
   const stopsCount = data?.stops.length ?? 0;
   const passengerLinks = data?.assignments.filter((link) => link.active).length ?? 0;
 

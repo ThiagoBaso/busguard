@@ -16,6 +16,9 @@ export default function ResponsibleHomeScreen() {
   const query = useTripQuery(getResponsibleTrip, allowed);
   const trip = query.data;
   const childIsBoarded = trip?.childStatus.toLocaleLowerCase('pt-BR') === 'a bordo';
+  const needsReview = trip?.childStatus === 'Precisa de confirmação';
+  const communicationTime = trip?.lastCommunication ? new Date(trip.lastCommunication).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : null;
+  const eventTime = trip?.lastEventAt ? new Date(trip.lastEventAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : null;
   const tripStatus = trip?.status === 'Em transito' ? 'Em trânsito' : trip?.status;
   const consultationTime = query.updatedAt?.toLocaleTimeString('pt-BR', {
     hour: '2-digit', minute: '2-digit',
@@ -39,7 +42,7 @@ export default function ResponsibleHomeScreen() {
           <Card style={[styles.hero, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <View style={styles.heroTop}>
               <AppText variant="label" muted>ACOMPANHAMENTO DA CRIANÇA</AppText>
-              <Badge label={query.error ? 'Consulta anterior' : 'Dados atualizados'} tone={query.error ? 'warning' : 'success'} />
+              <Badge label={query.error ? 'Consulta anterior' : 'Consulta concluída'} tone={query.error ? 'warning' : 'success'} />
             </View>
             <View style={styles.childHeader}>
               <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
@@ -57,7 +60,7 @@ export default function ResponsibleHomeScreen() {
               <View style={styles.statusContent}>
                 <AppText variant="label" muted>STATUS DO EMBARQUE</AppText>
                 <AppText style={styles.statusTitle}>{trip.childStatus}</AppText>
-                <AppText muted>{childIsBoarded ? 'O último registro confirma o embarque.' : 'Aguardando o registro de embarque.'}</AppText>
+                <AppText muted>{needsReview ? 'Há um registro aguardando revisão. Confirme com o transporte.' : childIsBoarded ? 'O último registro confirma o embarque.' : trip.childStatus === 'Desembarcou' ? 'O último registro confirma o desembarque.' : 'Nenhum embarque confirmado nesta viagem.'}</AppText>
               </View>
             </View>
             <View style={[styles.security, { backgroundColor: theme.primarySoft }]}>
@@ -65,9 +68,10 @@ export default function ResponsibleHomeScreen() {
               <AppText style={{ color: theme.primary, fontSize: 12, flex: 1 }}>Acompanhamento baseado nos registros de embarque; sem localização em tempo real.</AppText>
             </View>
             <View style={[styles.event, { borderTopColor: theme.border }]}>
-              <AppText variant="label" muted>ÚLTIMO REGISTRO</AppText>
-              <AppText variant="metric" style={styles.eventTime}>{trip.lastUpdate === '--:--' ? '—' : trip.lastUpdate}</AppText>
-              {trip.lastUpdate === '--:--' ? <AppText muted>Nenhum registro de embarque disponível.</AppText> : null}
+              <AppText variant="label" muted>ÚLTIMO REGISTRO CONFIRMADO</AppText>
+              <AppText variant="metric" style={styles.eventTime}>{eventTime ?? '—'}</AppText>
+              {eventTime ? <AppText muted>Horário informado no registro.</AppText> : null}
+              {!eventTime ? <AppText muted>Nenhum registro de embarque disponível.</AppText> : null}
             </View>
           </Card>
 
@@ -94,7 +98,8 @@ export default function ResponsibleHomeScreen() {
           <Card>
             <AppText variant="label">Atualização do acompanhamento</AppText>
             <AppText muted>{consultationTime ? `Última consulta concluída às ${consultationTime}.` : 'Aguardando confirmação da consulta.'}</AppText>
-            <AppText muted>Atualizamos os registros enquanto esta tela permanece aberta.</AppText>
+            <AppText muted>{communicationTime ? `Última comunicação do app do motorista: ${communicationTime}.` : 'Nenhuma comunicação recente do app do motorista foi recebida.'}</AppText>
+            {query.error || trip.communicationStatus !== 'recent' ? <AppText muted>As informações podem estar desatualizadas. Em caso de dúvida, entre em contato com o transporte.</AppText> : <AppText muted>A comunicação não garante que todos os registros foram recebidos.</AppText>}
             <Button label="Atualizar acompanhamento" variant="secondary" onPress={onRefresh} loading={query.refreshing} />
           </Card>
         </>

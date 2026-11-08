@@ -18,10 +18,10 @@ export function useApiData<T>(loader: () => Promise<T>, tables: string[] = ['*']
     if (!silent) { setLoading(true); setError(''); }
     try {
       const result = await loaderRef.current();
-      if (mounted.current && currentRequest === requestId.current) setData(result);
+      if (mounted.current && currentRequest === requestId.current) { setData(result); setError(''); }
       return result;
     } catch (caught) {
-      if (!silent && mounted.current && currentRequest === requestId.current) setError(errorMessage(caught));
+      if (mounted.current && currentRequest === requestId.current) setError(errorMessage(caught));
       throw caught;
     } finally {
       if (mounted.current && currentRequest === requestId.current) setLoading(false);
@@ -91,7 +91,10 @@ export function localDateInputValue() {
 }
 
 export function dateIsToday(value: string) {
-  return value.slice(0, 10) === localDateInputValue();
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return false;
+  const localDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return localDate === localDateInputValue();
 }
 
 export function includesText(values: Array<string | number | null | undefined>, search: string) {

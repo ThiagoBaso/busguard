@@ -32,6 +32,8 @@ docker compose ps
 
 A API fica em <http://localhost:8000>; a documentação interativa fica em <http://localhost:8000/docs>; o painel abre em <http://localhost:5173>. Quando o serviço `megamock` inicia, ele executa o único arquivo [database/init.sql](database/init.sql): cria ou atualiza o esquema e substitui os registros de `app_db` por dados de demonstração. A API aguarda a conclusão da carga. Os contêineres usam `restart: unless-stopped`, então voltam quando o Docker inicia; depois de aplicar uma vez com `docker compose up -d --build`, você não precisa iniciar o Vite manualmente.
 
+A API também executa a migração aditiva `python -m app.scripts.migrate_access_events_v1` antes de iniciar. Essa migração é separada da carga fictícia e preserva os registros existentes. Para aplicá-la em outro ambiente, faça e valide um backup, configure `DATABASE_URL` para o banco correto e execute o comando no diretório `backend`; **não use `init.sql` como migração de dados reais**. Reiniciar apenas um contêiner de API já criado com `docker compose restart api` não inicia o megamock, mas alterar o comando de inicialização no Compose exige recriar o contêiner da API para que o novo comando entre em vigor; evite iniciar ou recriar o megamock se precisar preservar os dados locais.
+
 Para recarregar a fixture manualmente, execute `docker compose down` e depois `docker compose up -d --build`. Sem a opção `-v`, o volume do MySQL permanece; os registros de `app_db` são substituídos na próxima inicialização.
 
 ### Aplicativo

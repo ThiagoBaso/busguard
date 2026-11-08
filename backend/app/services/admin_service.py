@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel
@@ -227,7 +227,7 @@ def start_trip(db: Session, trip_id: int) -> Trip:
         raise InvalidTripStateError
 
     trip.status = "in_progress"
-    trip.started_at = trip.started_at or datetime.now()
+    trip.started_at = trip.started_at or datetime.now(timezone.utc).replace(tzinfo=None)
     trip.finished_at = None
     return _persist(db, trip)
 
@@ -239,7 +239,7 @@ def finish_trip(db: Session, trip_id: int) -> Trip:
         raise InvalidTripStateError
 
     trip.status = "completed"
-    trip.finished_at = datetime.now()
+    trip.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     return _persist(db, trip)
 
 
@@ -250,12 +250,12 @@ def cancel_trip(db: Session, trip_id: int) -> Trip:
         raise InvalidTripStateError
 
     trip.status = "cancelled"
-    trip.finished_at = datetime.now()
+    trip.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     return _persist(db, trip)
 
 
 def _get_trip(db: Session, trip_id: int) -> Trip:
-    trip = db.get(Trip, trip_id)
+    trip = db.query(Trip).filter(Trip.id == trip_id).with_for_update().first()
 
     if not trip:
         raise AdminNotFoundError

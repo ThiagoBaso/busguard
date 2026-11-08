@@ -15,7 +15,7 @@ DATABASE_URL = os.getenv(
 if "@mysql:3307/" in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("@mysql:3307/", "@mysql:3306/")
 
-connect_args = {"charset": "utf8mb4"} if DATABASE_URL.startswith("mysql") else {}
+connect_args = {"charset": "utf8mb4", "init_command": "SET time_zone = '+00:00'"} if DATABASE_URL.startswith("mysql") else {}
 
 engine = create_engine(
     DATABASE_URL,

@@ -5,6 +5,7 @@ from app.database import get_db
 from app.schemas.mobile_trips import BoardingRequest, DriverTripMap, DriverTripResponse, NextStopRouteRequest
 from app.schemas.route_geometry import RouteGeometryRead
 from app.schemas.vehicle_locations import VehicleLocationCreate, VehicleLocationRead
+from app.schemas.access_events import AccessEventRead, TripEventCreate
 from app.security import get_current_user
 from app.services.trip_service import (
     CurrentTripNotFoundError,
@@ -53,6 +54,18 @@ def current_trip(
         )
 
 
+@router.post('/trips/current/heartbeat')
+def current_trip_heartbeat(db: Session = Depends(get_db), current_user=Depends(require_driver_or_supervisor)):
+    if current_user['role'] != 'driver':
+        raise HTTPException(status_code=403, detail='Only the assigned driver can report communication')
+    from app.services.trip_service import record_driver_communication
+    try:
+        communication = record_driver_communication(db, current_user['id'])
+        return {'trip_id': communication.trip_id, 'received_at': communication.received_at.isoformat() + 'Z'}
+    except CurrentTripNotFoundError:
+        raise HTTPException(status_code=404, detail='Current trip not found')
+
+
 @router.post("/trips/{trip_id}/boarding")
 def update_boarding(
     trip_id: int,
@@ -75,6 +88,22 @@ def update_boarding(
         raise HTTPException(status_code=400, detail="Passenger is not assigned to this trip")
     except TripNotInProgressError:
         raise HTTPException(status_code=400, detail="Trip is not in progress")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/trips/{trip_id}/events")
+def create_event(trip_id: int, data: TripEventCreate, db: Session = Depends(get_db), current_user=Depends(require_driver_or_supervisor)):
+    from app.services.boarding_events import EventConflictError, create_trip_event
+    try:
+        event, duplicated = create_trip_event(db, trip_id, data, current_user['id'], current_user['role'])
+        return {'event': AccessEventRead.model_validate(event), 'duplicated': duplicated}
+    except CurrentTripNotFoundError:
+        raise HTTPException(status_code=404, detail='Current trip not found')
+    except PassengerNotInTripError:
+        raise HTTPException(status_code=400, detail='Passenger is not assigned to this trip')
+    except EventConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/trips/{trip_id}/map", response_model=DriverTripMap)

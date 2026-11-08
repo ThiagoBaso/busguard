@@ -9,7 +9,8 @@ export type BoardingStudent = {
   address: string;
   checkedIn: boolean;
   boarded?: boolean;
-  status: 'waiting' | 'present' | 'absent';
+  pendingReview?: boolean;
+  status: 'waiting' | 'present' | 'absent' | 'review';
   time?: string | null;
 };
 
@@ -48,6 +49,9 @@ export type ResponsibleTrip = {
   childName: string;
   childStatus: string;
   lastUpdate: string;
+  lastEventAt: string | null;
+  lastCommunication: string | null;
+  communicationStatus: 'recent' | 'stale' | 'unknown';
   driverName: string;
   vehicleLabel: string;
 };
@@ -61,26 +65,29 @@ export async function getResponsibleTrip(signal?: AbortSignal): Promise<Responsi
 }
 
 export type BoardingResponse = {
-  passenger_id: number;
-  checked_in: boolean;
-  event_id: number;
+  event: { id: number; review_status: 'accepted' | 'pending' | 'rejected' };
   duplicated: boolean;
 };
+export type BoardingSubmission = { eventUuid: string; occurredAt: string };
 
 export async function updateBoardingStatus(
   tripId: number,
   passengerId: string,
   checkedIn: boolean,
   signal?: AbortSignal,
+  submission?: BoardingSubmission,
 ) {
   const passenger = Number(passengerId);
   if (!Number.isInteger(passenger) || passenger <= 0 || !Number.isInteger(tripId) || tripId <= 0) throw new Error('Identificador inválido.');
-  return apiFetch<BoardingResponse>(`/driver/trips/${tripId}/boarding`, {
+  if (!submission) throw new Error('Identificador do evento ausente.');
+  return apiFetch<BoardingResponse>(`/driver/trips/${tripId}/events`, {
     method: 'POST',
     signal,
     body: JSON.stringify({
       passenger_id: passenger,
-      checked_in: checkedIn,
+      action: checkedIn ? 'entry' : 'exit',
+      event_uuid: submission.eventUuid,
+      occurred_at: submission.occurredAt,
     }),
   });
 }

@@ -12,6 +12,7 @@ class BoardingStudent(BaseModel):
     address: str
     checkedIn: bool
     boarded: bool = False
+    pendingReview: bool = False
     status: str
     time: str | None = None
 
@@ -66,5 +67,8 @@ class ResponsibleTripResponse(BaseModel):
     childName: str
     childStatus: str
     lastUpdate: str
+    lastEventAt: str | None = None
+    lastCommunication: str | None = None
+    communicationStatus: str = 'unknown'
     driverName: str
     vehicleLabel: str

@@ -151,7 +151,8 @@ class LiveStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
                 def record_boarding():
                     with factory() as db:
-                        create_access_event(db, AccessEventCreate(passenger_id=1, vehicle_id=1, action="entry"))
+                        db.add(AccessEvent(passenger_id=1, vehicle_id=1, action='entry'))
+                        db.commit()
 
                 await asyncio.to_thread(record_boarding)
                 change = await asyncio.wait_for(sent.get(), 3)
@@ -166,11 +167,13 @@ class LiveStreamIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with engine.begin() as connection:
             connection.exec_driver_sql("CREATE TABLE passengers (id INTEGER PRIMARY KEY)")
             connection.exec_driver_sql("CREATE TABLE vehicles (id INTEGER PRIMARY KEY)")
+            connection.exec_driver_sql("CREATE TABLE trips (id INTEGER PRIMARY KEY, route_id INTEGER, vehicle_id INTEGER, driver_id INTEGER, supervisor_id INTEGER, trip_date DATE, scheduled_time TIME, started_at DATETIME, finished_at DATETIME, status TEXT, created_at DATETIME)")
+            connection.exec_driver_sql("INSERT INTO trips (id, route_id, vehicle_id, driver_id, trip_date, started_at, status) VALUES (1, 1, 1, 1, '2026-01-01', '2026-01-01', 'in_progress')")
         AccessEvent.__table__.create(engine)
         with AppSession(bind=engine) as db:
             db.add_all([
-                AccessEvent(passenger_id=1, vehicle_id=1, action="entry", created_at=datetime(2026, 1, 1)),
-                AccessEvent(passenger_id=1, vehicle_id=1, action="exit", created_at=datetime(2026, 1, 1)),
+                AccessEvent(trip_id=1, passenger_id=1, vehicle_id=1, action="entry", created_at=datetime(2026, 1, 1)),
+                AccessEvent(trip_id=1, passenger_id=1, vehicle_id=1, action="exit", created_at=datetime(2026, 1, 1)),
             ])
             db.commit()
             self.assertEqual(get_current_passenger_ids(db, 1), [])

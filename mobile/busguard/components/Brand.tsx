@@ -25,7 +25,7 @@ export function Brand({ large = false }: { large?: boolean }) {
   const theme = useAppTheme();
   return <View style={styles.brand}>
     <View style={[styles.mark, large && styles.markLarge]}><AppIcon name="bus" size={large ? 31 : 21} color="#665000" /></View>
-    <View><Text style={[styles.brandName, { color: theme.text }, large && { fontSize: 22 }]}>Rota Escolar</Text><Text style={[styles.brandCaption, { color: theme.text }]}>SEGURA <Text style={{ color: theme.muted }}>· BusGuard</Text></Text></View>
+    <View><Text style={[styles.brandName, { color: theme.text }, large && { fontSize: 22 }]}>BusGuard</Text><Text style={[styles.brandCaption, { color: theme.text }]}>TRANSPORTE ESCOLAR</Text></View>
   </View>;
 }
 

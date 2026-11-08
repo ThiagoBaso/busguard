@@ -8,6 +8,7 @@ from app.security import require_role
 from app.services.vehicle_service import (
     PassengerNotFoundError,
     VehicleNotFoundError,
+    EventTripError,
     create_access_event,
     get_current_passenger_ids,
 )
@@ -22,7 +23,10 @@ def vehicle_access(
     current_user=Depends(require_role("admin")),
 ):
     try:
-        return create_access_event(db, data)
+        return create_access_event(db, data, current_user['id'])
+
+    except EventTripError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     except PassengerNotFoundError:
         raise HTTPException(

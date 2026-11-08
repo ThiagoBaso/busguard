@@ -3,12 +3,13 @@ import { AppIcon } from '@/components/Brand';
 import { useAppTheme } from '@/constants/theme';
 import { useSession } from '@/services/session';
 import { LocationSharingProvider } from '@/services/locationSharing';
+import { TripCommunicationReporter } from '@/services/tripCommunication';
 
 export default function TabLayout() {
   const theme = useAppTheme();
   const { user } = useSession();
   const driver = user?.role === 'driver' || user?.role === 'supervisor';
-  return <LocationSharingProvider><Tabs screenOptions={{ headerShown: false, tabBarHideOnKeyboard: true, tabBarActiveTintColor: theme.primary, tabBarInactiveTintColor: theme.muted,
+  return <LocationSharingProvider><TripCommunicationReporter /><Tabs screenOptions={{ headerShown: false, tabBarHideOnKeyboard: true, tabBarActiveTintColor: theme.primary, tabBarInactiveTintColor: theme.muted,
     tabBarStyle: { backgroundColor: theme.surface, borderTopColor: theme.border, borderTopWidth: 1, minHeight: 64 },
     tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontWeight: '700' }, tabBarItemStyle: { paddingTop: 5, paddingBottom: 3 } }}>
     <Tabs.Protected guard={driver}>

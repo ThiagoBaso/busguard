@@ -35,8 +35,8 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
       </View>
       <View style={styles.status}>
         <Badge
-          label={absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
-          tone={absent ? 'warning' : aluno.checkedIn ? 'success' : 'neutral'}
+          label={aluno.pendingReview ? 'Precisa de revisão' : absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
+          tone={aluno.pendingReview || absent ? 'warning' : aluno.checkedIn ? 'success' : 'neutral'}
         />
         {aluno.checkedIn && aluno.time ? <AppText muted style={styles.eventTime}>Embarque às {aluno.time}</AppText> : null}
       </View>
@@ -61,9 +61,9 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
           label={pending ? pendingLabel : actionLabel}
           accessibilityLabel={`${pending ? pendingLabel : actionLabel} de ${aluno.name}`}
           variant={aluno.checkedIn ? 'secondary' : 'primary'}
-          disabled={disabled || pending}
+          disabled={disabled || pending || aluno.pendingReview}
           loading={pending}
-          onPress={() => { if (!disabled && !pending) onBoardingChange(aluno, !aluno.checkedIn); }}
+          onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, !aluno.checkedIn); }}
         />
       )}
     </Card>

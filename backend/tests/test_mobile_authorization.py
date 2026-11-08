@@ -191,20 +191,24 @@ class MobileAuthorizationTests(unittest.TestCase):
             RoutePassenger(id=2, route_id=31, passenger_id=302, stop_id=1, active=True),
         ])
         self.db.add_all([
-            AccessEvent(id=1, passenger_id=301, vehicle_id=41, action="entry", created_at=datetime(2026, 10, 8, 8, 1)),
-            AccessEvent(id=2, passenger_id=301, vehicle_id=41, action="exit", created_at=datetime(2026, 10, 8, 8, 5)),
+            AccessEvent(id=1, trip_id=51, passenger_id=301, vehicle_id=41, action="entry", created_at=datetime(2026, 10, 8, 8, 1)),
+            AccessEvent(id=2, trip_id=51, passenger_id=301, vehicle_id=41, action="exit", created_at=datetime(2026, 10, 8, 8, 5)),
         ])
         self.db.commit()
         result = get_driver_trip_map(self.db, 51, 1, "driver")
         completed = {stop["id"]: stop["completed"] for stop in result["stops"]}
         self.assertFalse(completed[1])
         self.assertFalse(completed[2])
-        self.db.add(AccessEvent(id=3, passenger_id=302, vehicle_id=41, action="entry", created_at=datetime(2026, 10, 8, 8, 6)))
+        self.db.add(AccessEvent(id=3, trip_id=51, passenger_id=302, vehicle_id=41, action="entry", created_at=datetime(2026, 10, 8, 8, 6)))
         self.db.commit()
         result = get_driver_trip_map(self.db, 51, 1, "driver")
         completed = {stop["id"]: stop["completed"] for stop in result["stops"]}
         self.assertTrue(completed[1])
         self.assertFalse(completed[2])
+        self.db.add(AccessEvent(id=4, trip_id=51, passenger_id=301, vehicle_id=41, action='exit', review_status='pending'))
+        self.db.commit()
+        result = get_driver_trip_map(self.db, 51, 1, 'driver')
+        self.assertFalse({stop['id']: stop['completed'] for stop in result['stops']}[1])
 
     def test_geometry_does_not_call_routing_for_another_drivers_trip(self):
         from fastapi import HTTPException

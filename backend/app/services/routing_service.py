@@ -9,7 +9,6 @@ from urllib.request import Request, urlopen
 from sqlalchemy.orm import Session
 
 from app.models.addresses import Address
-from app.models.access_events import AccessEvent
 from app.models.passengers import Passenger
 from app.models.route_passengers import RoutePassenger
 from app.models.route_stops import RouteStop
@@ -103,13 +102,8 @@ def calculate_admin_next_stop_route(db: Session, trip_id: int) -> dict:
     final_sequence = 0
     for assignment, stop in assignments:
         final_sequence = max(final_sequence, stop.sequence)
-        event_query = db.query(AccessEvent).filter(
-            AccessEvent.vehicle_id == trip.vehicle_id,
-            AccessEvent.passenger_id == assignment.passenger_id,
-        )
-        if trip.started_at:
-            event_query = event_query.filter(AccessEvent.created_at >= trip.started_at)
-        boarded = any((event.action or "").strip().lower() == "entry" for event in event_query.all())
+        from app.services.trip_service import _passenger_boarded_for_trip
+        boarded = _passenger_boarded_for_trip(db, trip, assignment.passenger_id)
         if not boarded:
             waiting_sequences.append(stop.sequence)
 

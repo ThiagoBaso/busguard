@@ -1,4 +1,4 @@
-from app.models.access_events import AccessEvent
+from app.models.access_events import AccessEvent, AccessEventReview
 from app.models.addresses import Address
 from app.models.cnh import Cnh
 from app.models.driver_vehicles import DriverVehicle
@@ -14,9 +14,11 @@ from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
+from app.models.trip_communications import TripCommunication
 
 __all__ = [
     "AccessEvent",
+    "AccessEventReview",
     "Address",
     "Cnh",
     "DriverVehicle",
@@ -32,4 +34,5 @@ __all__ = [
     "User",
     "Vehicle",
     "VehicleLocation",
+    "TripCommunication",
 ]
