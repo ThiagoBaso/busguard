@@ -9,7 +9,11 @@ import { useTripQuery } from '@/hooks/useTripQuery';
 import { useSession } from '@/services/session';
 import { getApiErrorMessage } from '@/services/apiClient';
 import { BoardingStudent, getDriverTrip, updateBoardingStatus } from '@/services/tripService';
+import { useLocationSharing } from '@/services/locationSharing';
+import { useDriverTripSnapshot } from '@/services/driverTripSync';
 import TripSummary from '@/components/TripSummary';
+import TripMap from '@/components/TripMap';
+import { nextBoardingStopSequence } from '@/components/tripMapTypes';
 
 type Filter = 'all' | 'waiting' | 'boarded';
 const filters: { value: Filter; label: string }[] = [
@@ -36,21 +40,27 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   const [filter, setFilter] = useState<Filter>('all');
   const allowed = user?.role === 'driver' || user?.role === 'supervisor';
   const query = useTripQuery(getDriverTrip, allowed && pendingId === null);
-  const trip = query.data;
+  const trip = useDriverTripSnapshot(user?.id ?? null, query.data, query.errorStatus);
   const pending = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const focused = useRef(false);
+  const sharing = useLocationSharing();
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; controller.current?.abort(); };
+    return () => {
+      mounted.current = false;
+      controller.current?.abort();
+    };
   }, []);
 
   useFocusEffect(useCallback(() => {
     focused.current = true;
     // Uma gravação continua até a confirmação/timeout, mesmo ao trocar de aba.
-    return () => { focused.current = false; };
+    return () => {
+      focused.current = false;
+    };
   }, []));
 
   const visibleStudents = useMemo(() => {
@@ -77,9 +87,8 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   }, [visibleStudents]);
 
   const nextStop = useMemo(() => {
-    const upcoming = (trip?.students ?? [])
-      .filter((student) => !student.checkedIn && student.status !== 'absent')
-      .sort((a, b) => a.stopOrder - b.stopOrder);
+    const nextSequence = nextBoardingStopSequence(trip?.students ?? []);
+    const upcoming = (trip?.students ?? []).filter(student => student.stopOrder === nextSequence);
     const first = upcoming[0];
     if (!first) return null;
     const stopName = first.stopName.trim() || 'Parada sem identificação';
@@ -177,6 +186,33 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
             disabled={pendingId !== null || Boolean(query.error)}
             compact={listOnly}
           />
+          {!listOnly ? <TripMap tripId={trip.id} position={sharing.tripId === trip.id ? sharing.position : null} nextStopSequence={nextStop?.stopOrder ?? null} /> : null}
+          {!listOnly && trip.status.toLocaleLowerCase() === 'em andamento' ? (
+            <Card style={styles.locationCard}>
+              <View style={styles.locationHeading}>
+                <View style={styles.progressTitleGroup}>
+                  <AppText variant="label" muted>RASTREAMENTO DO VEÍCULO</AppText>
+                  <AppText style={styles.progressTitle}>Compartilhe sua localização</AppText>
+                </View>
+                <Badge
+                  label={sharing.state === 'sharing' ? 'ATIVO' : sharing.state === 'requesting' ? 'AGUARDE' : sharing.state === 'error' ? 'ERRO' : 'PAUSADO'}
+                  tone={sharing.state === 'sharing' ? 'success' : 'warning'}
+                />
+              </View>
+              <AppText muted>
+                Com sua autorização, o BusGuard compartilha a localização durante a viagem e a envia a um serviço de rotas externo para calcular o caminho até a próxima parada. Ao sair do app, o compartilhamento para.
+              </AppText>
+              {sharing.state === 'denied' ? <Notice tone="error" message="A permissão de localização foi negada. Ative-a nas configurações do dispositivo para compartilhar o GPS." /> : null}
+              {sharing.state === 'error' ? <Notice tone="error" message="Não foi possível enviar a localização. Verifique a conexão e tente novamente." /> : null}
+              <Button
+                label={sharing.state === 'requesting' ? 'Solicitando permissão…' : sharing.active ? 'Parar compartilhamento' : 'Compartilhar localização'}
+                variant="secondary"
+                loading={sharing.state === 'requesting'}
+                disabled={sharing.state === 'requesting'}
+                onPress={() => sharing.active ? sharing.stop() : void sharing.start(trip.id)}
+              />
+            </Card>
+          ) : null}
           <Card style={styles.progressCard}>
             <View style={styles.progressHeading}>
               <View style={styles.progressTitleGroup}>
@@ -314,6 +350,8 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
 }
 
 const styles = StyleSheet.create({
+  locationCard: { gap: 10, borderRadius: 18 },
+  locationHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   progressCard: { gap: 12, borderRadius: 18 },
   progressHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   progressTitleGroup: { flex: 1, minWidth: 0, gap: 3 },

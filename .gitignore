@@ -5,6 +5,12 @@
 __pycache__/
 *.py[cod]
 
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.npm-cache/
+
 # Virtual environment
 venv/
 .venv/

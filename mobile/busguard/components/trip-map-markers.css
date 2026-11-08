@@ -1,0 +1,38 @@
+.trip-map-stop-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 2px solid #6b4d00;
+  border-radius: 50%;
+  background: #ffc629;
+  color: #302200;
+  font: 800 14px/1 system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 5px #0006;
+}
+
+.trip-map-stop-marker-completed {
+  border-color: #15803d;
+  background: #22c55e;
+  color: #052e16;
+}
+
+.trip-map-location-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgb(22 105 210 / 28%);
+}
+
+.trip-map-location-marker::after {
+  content: '';
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #075fcd;
+  box-shadow: 0 1px 5px #000a;
+}

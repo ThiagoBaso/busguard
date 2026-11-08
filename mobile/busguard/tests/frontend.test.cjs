@@ -336,6 +336,19 @@ test('loaders preservam caminhos e encaminham AbortSignal', async () => {
   assert.ok(calls.every(item => item.options.signal === signal));
 });
 
+test('rota até a parada envia posição e identificador no corpo da requisição', async () => {
+  const calls = [];
+  const service = loadModule('services/tripService.ts', {
+    '@/services/apiClient': { apiFetch: async (url, options) => { calls.push({ url, options }); return { coordinates: [] }; } },
+  });
+  const signal = new AbortController().signal;
+  await service.getNextStopGeometry(10, 20, { latitude: -22.21, longitude: -49.94 }, signal);
+  assert.equal(calls[0].url, '/driver/trips/10/map/next-stop');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.signal, signal);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { stop_id: 20, latitude: -22.21, longitude: -49.94 });
+});
+
 test('embarque rejeita IDs inválidos sem chamada e preserva checked_in=false no JSON', async () => {
   const calls = [];
   const expected = { passenger_id: 8, checked_in: false, event_id: 99, duplicated: false };

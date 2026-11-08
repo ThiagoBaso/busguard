@@ -13,6 +13,13 @@ from app.schemas.driver_vehicles import (
     DriverVehicleUpdate,
 )
 from app.schemas.drivers import DriverBase, DriverCreate, DriverRead, DriverUpdate
+from app.schemas.driver_profiles import (
+    DriverAccountCreate,
+    DriverAccountUpdate,
+    DriverProfileCreate,
+    DriverProfileRead,
+    DriverProfileUpdate,
+)
 from app.schemas.enums import AccessAction, CnhStatus, RouteShift, TripStatus, UserRole
 from app.schemas.passengers import PassengerBase, PassengerCreate, PassengerRead, PassengerUpdate
 from app.schemas.passengers_responsibles import (
@@ -39,6 +46,11 @@ from app.schemas.supervisors import SupervisorBase, SupervisorCreate, Supervisor
 from app.schemas.trips import TripBase, TripCreate, TripRead, TripUpdate
 from app.schemas.users import UserBase, UserCreate, UserRead, UserUpdate
 from app.schemas.vehicles import VehicleBase, VehicleCreate, VehicleRead, VehicleUpdate
+from app.schemas.vehicle_locations import (
+    LiveVehicleLocationRead,
+    VehicleLocationCreate,
+    VehicleLocationRead,
+)
 
 __all__ = [
     "AccessAction",
@@ -59,6 +71,11 @@ __all__ = [
     "DriverCreate",
     "DriverRead",
     "DriverUpdate",
+    "DriverAccountCreate",
+    "DriverAccountUpdate",
+    "DriverProfileCreate",
+    "DriverProfileRead",
+    "DriverProfileUpdate",
     "DriverVehicleBase",
     "DriverVehicleCreate",
     "DriverVehicleRead",
@@ -106,4 +123,7 @@ __all__ = [
     "VehicleCreate",
     "VehicleRead",
     "VehicleUpdate",
+    "LiveVehicleLocationRead",
+    "VehicleLocationCreate",
+    "VehicleLocationRead",
 ]

@@ -60,7 +60,7 @@ def get_current_passenger_ids(db: Session, vehicle_id: int) -> list[int]:
             func.row_number()
             .over(
                 partition_by=AccessEvent.passenger_id,
-                order_by=AccessEvent.created_at.desc(),
+                order_by=(AccessEvent.created_at.desc(), AccessEvent.id.desc()),
             )
             .label("row_number"),
         )

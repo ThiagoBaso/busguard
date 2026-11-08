@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.addresses import Address
+from app.models.access_events import AccessEvent
 from app.models.cnh import Cnh
 from app.models.driver_vehicles import DriverVehicle
 from app.models.drivers import Driver
@@ -16,10 +18,13 @@ from app.models.supervisors import Supervisor
 from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
+from app.models.vehicle_locations import VehicleLocation
 from app.schemas.addresses import AddressCreate, AddressRead, AddressUpdate
+from app.schemas.access_events import AccessEventRead
 from app.schemas.cnh import CnhCreate, CnhRead, CnhUpdate
 from app.schemas.driver_vehicles import DriverVehicleCreate, DriverVehicleRead, DriverVehicleUpdate
 from app.schemas.drivers import DriverCreate, DriverRead, DriverUpdate
+from app.schemas.driver_profiles import DriverProfileCreate, DriverProfileRead, DriverProfileUpdate
 from app.schemas.passengers import PassengerCreate, PassengerRead, PassengerUpdate
 from app.schemas.passengers_responsibles import (
     PassengerResponsibleCreate,
@@ -28,29 +33,120 @@ from app.schemas.passengers_responsibles import (
 )
 from app.schemas.responsibles import ResponsibleCreate, ResponsibleRead, ResponsibleUpdate
 from app.schemas.route_passengers import RoutePassengerCreate, RoutePassengerRead, RoutePassengerUpdate
-from app.schemas.route_stops import RouteStopCreate, RouteStopRead, RouteStopUpdate
+from app.schemas.route_stops import RouteStopCreate, RouteStopOrder, RouteStopRead, RouteStopUpdate
+from app.schemas.route_geometry import NextStopRouteRead, RouteGeometryRead
 from app.schemas.routes import RouteCreate, RouteRead, RouteUpdate
 from app.schemas.supervisors import SupervisorCreate, SupervisorRead, SupervisorUpdate
 from app.schemas.trips import TripCreate, TripRead, TripUpdate
 from app.schemas.users import UserCreate, UserRead, UserUpdate
 from app.schemas.vehicles import VehicleCreate, VehicleRead, VehicleUpdate
+from app.schemas.vehicle_locations import LiveVehicleLocationRead, VehicleLocationRead
 from app.security import require_role
 from app.services.admin_service import (
     AdminConflictError,
     AdminNotFoundError,
+    AdminValidationError,
     InvalidTripStateError,
     cancel_trip as cancel_trip_service,
+    create_driver_profile,
     create_record,
     create_user as create_user_service,
     delete_record,
     finish_trip as finish_trip_service,
     list_records,
+    reorder_route_stops,
     start_trip as start_trip_service,
     update_record,
+    update_driver_profile,
     update_user as update_user_service,
+)
+from app.services.routing_service import (
+    RouteCoordinatesError,
+    RouteNotFoundError,
+    RoutePrivacyError,
+    RoutingUnavailableError,
+    calculate_demo_route,
+    calculate_admin_next_stop_route,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/access-events", response_model=list[AccessEventRead])
+def list_access_events(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    return (
+        db.query(AccessEvent)
+        .order_by(AccessEvent.created_at.desc(), AccessEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/vehicle-locations", response_model=list[LiveVehicleLocationRead])
+def list_live_vehicle_locations(limit: int = 100, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    latest = (
+        db.query(func.max(VehicleLocation.id).label("location_id"))
+        .group_by(VehicleLocation.trip_id)
+        .subquery()
+    )
+    rows = (
+        db.query(VehicleLocation, Trip, Vehicle, Route, Driver, User)
+        .join(latest, latest.c.location_id == VehicleLocation.id)
+        .join(Trip, Trip.id == VehicleLocation.trip_id)
+        .join(Vehicle, Vehicle.id == Trip.vehicle_id)
+        .join(Route, Route.id == Trip.route_id)
+        .join(Driver, Driver.id == Trip.driver_id)
+        .join(User, User.id == Driver.users_id)
+        .filter(Trip.status == "in_progress")
+        .order_by(VehicleLocation.recorded_at.desc(), VehicleLocation.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": location.id,
+            "trip_id": trip.id,
+            "vehicle_id": vehicle.id,
+            "plate": vehicle.plate,
+            "vehicle_label": vehicle.model,
+            "capacity": vehicle.capacity,
+            "driver_name": user.name,
+            "route_name": route.name,
+            "trip_status": trip.status,
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "speed_kmh": location.speed_kmh,
+            "source": location.source,
+            "recorded_at": location.recorded_at,
+        }
+        for location, trip, vehicle, route, _driver_user, user in rows
+    ]
+
+
+@router.get("/trips/{trip_id}/locations", response_model=list[VehicleLocationRead])
+def list_trip_locations(trip_id: int, limit: int = 100, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    return (
+        db.query(VehicleLocation)
+        .filter(VehicleLocation.trip_id == trip_id)
+        .order_by(VehicleLocation.recorded_at.desc(), VehicleLocation.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/trips/{trip_id}/next-stop-geometry", response_model=NextStopRouteRead)
+def get_trip_next_stop_geometry(trip_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    try:
+        return calculate_admin_next_stop_route(db, trip_id)
+    except RouteNotFoundError:
+        raise _not_found()
+    except RouteCoordinatesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    except RoutePrivacyError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except RoutingUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Não foi possível calcular o trajeto até a próxima parada agora.")
 
 
 @router.get("/addresses", response_model=list[AddressRead])
@@ -181,6 +277,24 @@ def delete_driver(record_id: int, db: Session = Depends(get_db), current_user=De
     return _delete(db, Driver, record_id)
 
 
+@router.post("/driver-profiles", response_model=DriverProfileRead, status_code=status.HTTP_201_CREATED)
+def create_driver_profile_endpoint(data: DriverProfileCreate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    try:
+        return create_driver_profile(db, data)
+    except AdminConflictError:
+        raise _conflict()
+
+
+@router.put("/driver-profiles/{record_id}", response_model=DriverProfileRead)
+def update_driver_profile_endpoint(record_id: int, data: DriverProfileUpdate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    try:
+        return update_driver_profile(db, record_id, data)
+    except AdminNotFoundError:
+        raise _not_found()
+    except AdminConflictError:
+        raise _conflict()
+
+
 @router.get("/driver-vehicles", response_model=list[DriverVehicleRead])
 def list_driver_vehicles(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     return list_records(db, DriverVehicle, limit, offset)
@@ -264,6 +378,32 @@ def delete_route(record_id: int, db: Session = Depends(get_db), current_user=Dep
 @router.get("/route-stops", response_model=list[RouteStopRead])
 def list_route_stops(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     return list_records(db, RouteStop, limit, offset)
+
+
+@router.get("/routes/{route_id}/geometry", response_model=RouteGeometryRead)
+def get_route_geometry(route_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    try:
+        return calculate_demo_route(db, route_id)
+    except RouteNotFoundError:
+        raise _not_found()
+    except RouteCoordinatesError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    except RoutePrivacyError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except RoutingUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Não foi possível calcular o trajeto pelas ruas agora.")
+
+
+@router.post("/routes/{route_id}/stops/reorder", response_model=list[RouteStopRead])
+def reorder_stops(route_id: int, data: RouteStopOrder, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
+    try:
+        return reorder_route_stops(db, route_id, data.stop_ids)
+    except AdminNotFoundError:
+        raise _not_found()
+    except AdminValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    except AdminConflictError:
+        raise _conflict()
 
 
 @router.post("/route-stops", response_model=RouteStopRead, status_code=status.HTTP_201_CREATED)
@@ -361,6 +501,8 @@ def _create(db: Session, model, data):
         return create_record(db, model, data)
     except AdminConflictError:
         raise _conflict()
+    except AdminValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
 def _update(db: Session, model, record_id: int, data):
@@ -370,6 +512,8 @@ def _update(db: Session, model, record_id: int, data):
         raise _not_found()
     except AdminConflictError:
         raise _conflict()
+    except AdminValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
 def _delete(db: Session, model, record_id: int):

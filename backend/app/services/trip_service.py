@@ -1,7 +1,7 @@
 from datetime import date
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case
+from sqlalchemy.orm import Session, aliased
 
 from app.models.access_events import AccessEvent
 from app.models.addresses import Address
@@ -11,11 +11,14 @@ from app.models.passengers_responsibles import PassengerResponsible
 from app.models.responsibles import Responsible
 from app.models.supervisors import Supervisor
 from app.models.route_passengers import RoutePassenger
+from app.models.route_stops import RouteStop
 from app.models.routes import Route
 from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
+from app.models.vehicle_locations import VehicleLocation
 from app.schemas.mobile_trips import BoardingStudent
+from app.schemas.vehicle_locations import VehicleLocationCreate
 
 
 class CurrentTripNotFoundError(Exception):
@@ -74,6 +77,41 @@ def get_driver_current_trip(db: Session, user_id: int, role: str) -> dict:
         "status": "Em andamento",
         "progressLabel": f"{round((checked_count / total) * 100)}% concluido",
         "students": students,
+    }
+
+
+def get_authorized_active_trip(db: Session, trip_id: int, user_id: int, role: str) -> Trip:
+    row = _authorized_trip_query(db, user_id, role).filter(Trip.id == trip_id).first()
+    if not row:
+        raise CurrentTripNotFoundError
+    return row[0]
+
+
+def get_driver_trip_map(db: Session, trip_id: int, user_id: int, role: str) -> dict:
+    trip = get_authorized_active_trip(db, trip_id, user_id, role)
+    stops = (db.query(RouteStop, Address).join(Address, Address.id == RouteStop.address_id)
+             .filter(RouteStop.route_id == trip.route_id).order_by(RouteStop.sequence, RouteStop.id).all())
+    location = (db.query(VehicleLocation).filter(VehicleLocation.trip_id == trip.id)
+                .order_by(VehicleLocation.recorded_at.desc(), VehicleLocation.id.desc()).first())
+    assignments = (db.query(RoutePassenger).filter(
+        RoutePassenger.route_id == trip.route_id,
+        RoutePassenger.active == True,
+        RoutePassenger.stop_id.isnot(None),
+    ).all())
+    passengers_by_stop: dict[int, list[bool]] = {}
+    for assignment in assignments:
+        passengers_by_stop.setdefault(assignment.stop_id, []).append(_passenger_boarded_for_trip(db, trip, assignment.passenger_id))
+    return {
+        "trip_id": trip.id,
+        "stops": [{"id": stop.id, "sequence": stop.sequence,
+                   "address": f"{address.rua}, {address.numero} - {address.bairro}",
+                   "latitude": address.latitude, "longitude": address.longitude,
+                   "coordinate_source": address.coordinate_source,
+                   "completed": bool(passengers_by_stop.get(stop.id)) and all(passengers_by_stop[stop.id])} for stop, address in stops],
+        "location": None if location is None else {
+            "latitude": location.latitude, "longitude": location.longitude,
+            "source": location.source, "recorded_at": location.recorded_at,
+        },
     }
 
 
@@ -185,30 +223,66 @@ def set_boarding_status(
     }
 
 
+def record_vehicle_location(
+    db: Session,
+    trip_id: int,
+    data: VehicleLocationCreate,
+    user_id: int,
+    role: str,
+) -> VehicleLocation:
+    authorized_trip = _authorized_trip_query(db, user_id, role, active_only=False).filter(
+        Trip.id == trip_id
+    ).first()
+    if not authorized_trip:
+        raise CurrentTripNotFoundError
+
+    trip = authorized_trip[0]
+    if trip.status != "in_progress":
+        raise TripNotInProgressError
+
+    location = VehicleLocation(
+        trip_id=trip.id,
+        latitude=data.latitude,
+        longitude=data.longitude,
+        speed_kmh=data.speed_kmh,
+    )
+    db.add(location)
+    db.commit()
+    db.refresh(location)
+    return location
+
+
 def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
+    stop_address = aliased(Address)
     passengers = (
-        db.query(Passenger, Address)
+        db.query(Passenger, Address, RouteStop, stop_address)
         .join(RoutePassenger, RoutePassenger.passenger_id == Passenger.id)
         .join(Address, Address.id == Passenger.addresses_id)
+        .outerjoin(RouteStop, and_(RouteStop.id == RoutePassenger.stop_id, RouteStop.route_id == trip.route_id))
+        .outerjoin(stop_address, stop_address.id == RouteStop.address_id)
         .filter(RoutePassenger.route_id == trip.route_id, RoutePassenger.active == True)
-        .order_by(Passenger.name)
+        .order_by(case((RouteStop.sequence.is_(None), 1), else_=0), RouteStop.sequence, Passenger.name)
         .all()
     )
 
     students = []
+    last_sequence = max((stop.sequence for _, _, stop, _ in passengers if stop), default=0)
 
-    for index, (passenger, address) in enumerate(passengers, start=1):
+    for index, (passenger, home_address, stop, pickup_address) in enumerate(passengers, start=1):
+        address = pickup_address or home_address
         latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at)
         checked_in = _event_has_action(latest_event, "entry")
+        boarded = _passenger_boarded_for_trip(db, trip, passenger.id)
         students.append(
             BoardingStudent(
                 id=str(passenger.id),
                 name=passenger.name,
                 age=_age_from_birth_date(passenger.birth_date),
-                stopOrder=index,
+                stopOrder=stop.sequence if stop else last_sequence + index,
                 stopName=address.rua,
                 address=f"{address.rua}, {address.numero}",
                 checkedIn=checked_in,
+                boarded=boarded,
                 status="present" if checked_in else "waiting",
                 time=latest_event.created_at.strftime("%H:%M") if latest_event and checked_in else None,
             )
@@ -236,6 +310,16 @@ def _latest_event_for_passenger(
 
 def _event_has_action(event: AccessEvent | None, action: str) -> bool:
     return bool(event and event.action and event.action.strip().lower() == action.lower())
+
+
+def _passenger_boarded_for_trip(db: Session, trip: Trip, passenger_id: int) -> bool:
+    query = db.query(AccessEvent).filter(
+        AccessEvent.vehicle_id == trip.vehicle_id,
+        AccessEvent.passenger_id == passenger_id,
+    )
+    if trip.started_at:
+        query = query.filter(AccessEvent.created_at >= trip.started_at)
+    return any(_event_has_action(event, "entry") for event in query.all())
 
 
 

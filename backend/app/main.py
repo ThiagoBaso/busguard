@@ -6,6 +6,7 @@ from app.routes import admin
 from app.routes import driver
 from app.routes import passengers
 from app.routes import responsible
+from app.routes import realtime
 from app.routes import vehicles
 from app.routes.auth import router as auth_router
 
@@ -17,6 +18,8 @@ app.add_middleware(
         "http://localhost:8081",
         "http://localhost:8082",
         "http://localhost:19006",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -25,6 +28,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(admin.router)
+app.include_router(realtime.router)
 app.include_router(driver.router)
 app.include_router(passengers.router)
 app.include_router(responsible.router)

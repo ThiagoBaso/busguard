@@ -13,6 +13,7 @@ from app.models.supervisors import Supervisor
 from app.models.trips import Trip
 from app.models.users import User
 from app.models.vehicles import Vehicle
+from app.models.vehicle_locations import VehicleLocation
 
 __all__ = [
     "AccessEvent",
@@ -30,4 +31,5 @@ __all__ = [
     "Trip",
     "User",
     "Vehicle",
+    "VehicleLocation",
 ]

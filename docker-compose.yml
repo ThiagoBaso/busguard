@@ -2,19 +2,45 @@ services:
   api:
     build: ./backend
     container_name: fastapi
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
     env_file:
       - .env
+    environment:
+      DATABASE_URL: mysql+pymysql://app_user:app_password@mysql:3306/app_db?charset=utf8mb4
     depends_on:
-      - mysql
+      megamock:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  admin-panel:
+    build: ./admin-panel
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./admin-panel:/app
+      - admin_panel_node_modules:/app/node_modules
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      BUSGUARD_WATCH_POLLING: "true"
+    depends_on:
+      api:
+        condition: service_healthy
 
   mysql:
     image: mysql:8.0
     container_name: mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: app_db
@@ -24,7 +50,37 @@ services:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysqladmin ping --host=127.0.0.1 --user=root --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  megamock:
+    image: mysql:8.0
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - ./database/init.sql:/seed/init.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        rm -f /tmp/megamock-ready
+        export MYSQL_PWD="$${MYSQL_ROOT_PASSWORD}"
+        until mysqladmin ping --host=mysql --user=root --silent; do sleep 2; done
+        mysql --default-character-set=utf8mb4 --host=mysql --user=root < /seed/init.sql
+        touch /tmp/megamock-ready
+        exec tail -f /dev/null
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/megamock-ready"]
+      interval: 2s
+      timeout: 1s
+      retries: 60
 
 volumes:
+  admin_panel_node_modules:
   mysql_data:

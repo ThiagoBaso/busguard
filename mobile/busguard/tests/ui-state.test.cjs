@@ -114,8 +114,9 @@ for (const mode of ['light', 'dark']) {
       '@/components/Brand': { AppIcon: 'Icon' },
       '@/constants/theme': { useAppTheme: () => theme },
       '@/services/session': { useSession: () => ({ user: { role: 'driver' } }) },
+      '@/services/locationSharing': { LocationSharingProvider: 'LocationSharingProvider' },
     });
-    const tree = TabLayout();
+    const tree = TabLayout().props.children;
     const screens = tree.props.children.flatMap(child => child.type === 'Protected'
       ? [child.props.children].flat() : [child]);
     for (const screen of screens) {

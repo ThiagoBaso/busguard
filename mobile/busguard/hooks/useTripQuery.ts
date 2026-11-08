@@ -42,14 +42,16 @@ export function useTripQuery<T>(loader: (signal?: AbortSignal) => Promise<T>, en
     setLoading(false);
   }, []);
 
-  const refresh = useCallback((): Promise<T | null> => {
+  const runRefresh = useCallback((silent = false): Promise<T | null> => {
     if (!focused.current || (AppState.currentState !== null && AppState.currentState !== 'active')) return Promise.resolve(null);
     if (task.current) return task.current;
     const current = ++generation.current;
     const abort = new AbortController();
     controller.current = abort;
-    setRefreshing(true);
-    setLoading(dataRef.current === null);
+    if (!silent) {
+      setRefreshing(true);
+      setLoading(dataRef.current === null);
+    }
     const pending = (async () => {
       try {
         const result = await loader(abort.signal);
@@ -82,6 +84,8 @@ export function useTripQuery<T>(loader: (signal?: AbortSignal) => Promise<T>, en
     return pending;
   }, [loader]);
 
+  const refresh = useCallback(() => runRefresh(), [runRefresh]);
+
   useFocusEffect(useCallback(() => {
     focused.current = true;
     if (enabledRef.current) void refresh();
@@ -90,15 +94,15 @@ export function useTripQuery<T>(loader: (signal?: AbortSignal) => Promise<T>, en
       else if (state !== 'active') cancel();
     });
     const timer = setInterval(() => {
-      if (enabledRef.current) void refresh();
-    }, 15000);
+      if (enabledRef.current) void runRefresh(true);
+    }, 3000);
     return () => {
       focused.current = false;
       clearInterval(timer);
       subscription.remove();
       cancel();
     };
-  }, [cancel, refresh]));
+  }, [cancel, refresh, runRefresh]));
 
   useEffect(() => { if (!enabled) cancel(); }, [enabled, cancel]);
   return { data, loading, refreshing, error, errorStatus, errorKind, updatedAt, refresh, cancel };

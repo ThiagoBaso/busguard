@@ -8,6 +8,7 @@ export type BoardingStudent = {
   stopName: string;
   address: string;
   checkedIn: boolean;
+  boarded?: boolean;
   status: 'waiting' | 'present' | 'absent';
   time?: string | null;
 };
@@ -20,6 +21,25 @@ export type DriverTrip = {
   progressLabel: string;
   students: BoardingStudent[];
 };
+
+export type TripMapStop = { id: number; sequence: number; address: string; latitude: number | null; longitude: number | null; coordinate_source: string; completed?: boolean };
+export type TripMapData = { trip_id: number; stops: TripMapStop[]; location: { latitude: number; longitude: number; source: string; recorded_at: string } | null };
+export type TripGeometry = { coordinates: [number, number][]; distance_m: number; duration_s: number };
+
+export async function getDriverTripMap(tripId: number, signal?: AbortSignal): Promise<TripMapData> {
+  return apiFetch<TripMapData>(`/driver/trips/${tripId}/map`, { signal });
+}
+
+export async function getDriverTripGeometry(tripId: number, signal?: AbortSignal): Promise<TripGeometry> {
+  return apiFetch<TripGeometry>(`/driver/trips/${tripId}/map/geometry`, { signal });
+}
+
+export async function getNextStopGeometry(tripId: number, stopId: number, position: { latitude: number; longitude: number }, signal?: AbortSignal): Promise<TripGeometry> {
+  return apiFetch<TripGeometry>(`/driver/trips/${tripId}/map/next-stop`, {
+    method: 'POST', signal,
+    body: JSON.stringify({ stop_id: stopId, latitude: position.latitude, longitude: position.longitude }),
+  });
+}
 
 export type ResponsibleTrip = {
   id: number;
@@ -61,6 +81,23 @@ export async function updateBoardingStatus(
     body: JSON.stringify({
       passenger_id: passenger,
       checked_in: checkedIn,
+    }),
+  });
+}
+
+export async function updateVehicleLocation(
+  tripId: number,
+  location: { latitude: number; longitude: number; speedKmh?: number | null },
+  signal?: AbortSignal,
+): Promise<{ id: number; trip_id: number; latitude: number; longitude: number; speed_kmh: number | null; recorded_at: string }> {
+  if (!Number.isInteger(tripId) || tripId <= 0) throw new Error('Identificador inválido.');
+  return apiFetch<{ id: number; trip_id: number; latitude: number; longitude: number; speed_kmh: number | null; recorded_at: string }>(`/driver/trips/${tripId}/location`, {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      ...(location.speedKmh != null ? { speed_kmh: location.speedKmh } : {}),
     }),
   });
 }

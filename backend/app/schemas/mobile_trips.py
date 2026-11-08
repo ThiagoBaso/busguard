@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -9,6 +11,7 @@ class BoardingStudent(BaseModel):
     stopName: str
     address: str
     checkedIn: bool
+    boarded: bool = False
     status: str
     time: str | None = None
 
@@ -20,6 +23,35 @@ class DriverTripResponse(BaseModel):
     status: str
     progressLabel: str
     students: list[BoardingStudent]
+
+
+class DriverMapStop(BaseModel):
+    id: int
+    sequence: int
+    address: str
+    latitude: float | None
+    longitude: float | None
+    coordinate_source: str
+    completed: bool = False
+
+
+class DriverMapLocation(BaseModel):
+    latitude: float
+    longitude: float
+    source: str
+    recorded_at: datetime
+
+
+class DriverTripMap(BaseModel):
+    trip_id: int
+    stops: list[DriverMapStop]
+    location: DriverMapLocation | None
+
+
+class NextStopRouteRequest(BaseModel):
+    stop_id: int = Field(gt=0)
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
 
 class BoardingRequest(BaseModel):

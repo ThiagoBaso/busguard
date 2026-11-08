@@ -34,7 +34,13 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permita que o BusGuard compartilhe a localização do veículo durante uma viagem ativa, enquanto o aplicativo estiver aberto."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

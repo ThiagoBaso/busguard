@@ -18,7 +18,7 @@ router = APIRouter(
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: str  # Mantido por compatibilidade; aceita e-mail ou CPF.
     password: str
 
 

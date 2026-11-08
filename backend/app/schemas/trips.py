@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -12,6 +12,7 @@ class TripBase(BaseModel):
     driver_id: int
     supervisor_id: Optional[int] = None
     trip_date: date
+    scheduled_time: Optional[time] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     status: TripStatus = TripStatus.scheduled
@@ -27,6 +28,7 @@ class TripUpdate(BaseModel):
     driver_id: Optional[int] = None
     supervisor_id: Optional[int] = None
     trip_date: Optional[date] = None
+    scheduled_time: Optional[time] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     status: Optional[TripStatus] = None

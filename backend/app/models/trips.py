@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, String, Time, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -15,6 +15,7 @@ class Trip(Base):
     driver_id: Mapped[int] = mapped_column(ForeignKey("drivers.id"))
     supervisor_id: Mapped[int | None] = mapped_column(ForeignKey("supervisors.id"), nullable=True)
     trip_date: Mapped[date] = mapped_column(Date)
+    scheduled_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")

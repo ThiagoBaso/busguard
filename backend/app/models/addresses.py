@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,6 +17,9 @@ class Address(Base):
     cidade: Mapped[str] = mapped_column(String(100))
     estado: Mapped[str] = mapped_column(String(2))
     complemento: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coordinate_source: Mapped[str] = mapped_column(String(10), default="manual", server_default="manual")
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),

@@ -28,15 +28,16 @@ Não use Planner/Coder/Reviewer, delegação multiagente, arquivos de controle p
 | `backend/app/database.py` | Engine e sessão do banco. |
 | `mobile/busguard/app/` | Telas e navegação com Expo Router. |
 | `mobile/busguard/services/` | Cliente HTTP, sessão e integração de viagens. |
-| `database/` | Bootstrap SQL, fixtures e arquivos de modelagem. |
-| `docker-compose.yml` | API e MySQL para desenvolvimento local. |
+| `admin-panel/src/` | Painel administrativo React/TypeScript, cliente da API e telas web. |
+| `database/` | Esquema, migrações e dados fictícios no arquivo SQL unificado. |
+| `docker-compose.yml` | API, MySQL, recarga automática do megamock e painel web para desenvolvimento local. |
 
-Fluxo típico da API: rota → autenticação e schema → serviço → persistência. O app chama a API por HTTP/JSON com Bearer JWT. O Compose executa API e MySQL; o Expo é iniciado separadamente.
+Fluxo típico da API: rota → autenticação e schema → serviço → persistência. O app e o painel chamam a API por HTTP/JSON com Bearer JWT. O Compose executa API, MySQL, fixture e painel; o Expo é iniciado separadamente.
 
 ## Stack
 
 - Backend: Python 3.12 na imagem Docker, FastAPI, SQLAlchemy síncrono, Pydantic v2 e PyMySQL.
-- Banco: MySQL 8.0. O bootstrap de volume novo usa `database/init.sql`.
+- Banco: MySQL 8.0. O serviço `megamock` executa `database/init.sql` em volumes novos e existentes.
 - App: Expo SDK 57, Expo Router, React 19, React Native 0.86 e TypeScript estrito.
 - Dependências mobile: npm e `package-lock.json`. As dependências Python não estão totalmente fixadas.
 
@@ -48,19 +49,30 @@ Confira os manifests antes de atualizar bibliotecas ou assumir versões efetivas
 | --- | --- |
 | `GET /health` | Público; verifica a API, não a conexão com o banco. |
 | `POST /auth/login` e `GET /auth/me` | Login por JSON; consulta o usuário e o perfil atuais. |
+| `POST /driver/trips/{trip_id}/location` | Motorista ou supervisor autorizado; grava posição GPS da viagem ativa. |
 | `GET /driver/trips/current` | Motorista ou supervisor vinculado à viagem. |
+| `GET /driver/trips/{trip_id}/map` e `/map/geometry` | Paradas, última posição e trajeto fictício do OSRM, somente para o operador vinculado à viagem ativa. |
+| `POST /driver/trips/{trip_id}/map/next-stop` | Calcula até parada fictícia da viagem autorizada; envia ao OSRM a posição recebida, inclusive GPS real. |
 | `POST /driver/trips/{trip_id}/boarding` | Operador vinculado; recebe `passenger_id` positivo e `checked_in`. |
 | `GET /responsible/children/current-trip` | Responsável com vínculo ao passageiro; admin também é aceito pela rota. |
 | `/admin/...` | Cadastros e vínculos; requer perfil admin. |
+| `GET /admin/routes/{route_id}/geometry` | Calcula no OSRM público apenas rotas cujas coordenadas são fictícias. |
+| `GET /admin/trips/{trip_id}/next-stop-geometry` | Admin; calcula do GPS mais recente ate a proxima parada com passageiro aguardando. A posicao GPS pode ser enviada ao OSRM conforme autorizacao do usuario; coordenadas manuais de paradas ficam restritas a linha reta local. |
+| `GET /admin/changes` | Transmissão autenticada para administradores; informa tabelas alteradas após confirmação das transações da API. |
+| `POST /admin/routes/{route_id}/stops/reorder` | Reordena as paradas sem alterar os vínculos dos passageiros. |
 | `/admin/trips/{trip_id}/start`, `/finish`, `/cancel` | Ações administrativas de viagem. |
 
 Os contratos mobile ficam em `backend/app/schemas/mobile_trips.py`; serviços em `backend/app/services/`. Preserve nomes e semântica ao alterar uma ponta: por exemplo, `passenger_id`/`checked_in` no pedido e `routeName`/`checkedIn` nas respostas mobile.
 
+No mapa da viagem, cada parada inclui `completed` quando todos os alunos associados ja embarcaram durante a viagem; `boarded` permanece verdadeiro mesmo depois do desembarque. O calculo do proximo ponto ignora embarques ja registrados e, depois do ultimo embarque, segue para a parada final.
+
 ## Domínio e dados
 
-O esquema cobre usuários, passageiros, responsáveis, endereços, motoristas, CNHs, veículos, rotas, paradas, vínculos de passageiros a rotas, viagens e eventos de acesso. Os estados de viagem são `scheduled`, `in_progress`, `completed` e `cancelled`.
+O esquema cobre usuários, passageiros, responsáveis, endereços, motoristas, CNHs, veículos, rotas, paradas, vínculos de passageiros a rotas, viagens, eventos de acesso e histórico de posições GPS. Os estados de viagem são `scheduled`, `in_progress`, `completed` e `cancelled`.
 
-`database/init.sql` é o bootstrap do Compose. `database/create_tables.sql` duplica esse conteúdo; `database/transport_schema.sql` é complementar. `database/megamock.sql` é uma fixture manual. Esses arquivos não formam uma sequência de migrações e não são reaplicados em volumes existentes. O ORM e o SQL ainda têm diferenças de constraints; Alembic não está configurado.
+`database/init.sql` reúne esquema, atualizações para volumes anteriores e dados fictícios de Marília/SP. Quando o serviço `megamock` inicia, o Compose executa esse arquivo: cria ou atualiza as tabelas e substitui os registros de `app_db` em uma transação. Isso também acontece em volumes existentes; nunca inicie o serviço se precisar preservar dados inseridos localmente. Endereços possuem coordenadas opcionais e origem `demo` ou `manual`; passageiros podem ser vinculados a uma parada da própria rota. As posições GPS de demonstração são identificadas pela origem `demo`; as posições recebidas do aplicativo usam `gps`. API, MySQL, megamock e painel usam `restart: unless-stopped` para voltarem quando o Docker iniciar. O ORM e o SQL ainda têm diferenças de constraints; Alembic não está configurado.
+
+As oito rotas da fixture usam pontos simulados sobre vias mapeadas de Marília; têm nove paradas e cerca de 2,5 a 4,7 km cada. Os nomes das vias vêm do mapa, mas números, CEPs, passageiros e escolas são fictícios; as coordenadas não identificam residências ou escolas reais.
 
 ## Desenvolvimento e verificações
 
@@ -74,14 +86,19 @@ python -B -m unittest discover -s tests -v
 
 Para o app, em `mobile/busguard`, `npm test` executa a suíte Node existente e `npm run typecheck` verifica TypeScript. Use MySQL isolado para validar comportamento específico do banco; testes com SQLite não comprovam equivalência com MySQL.
 
+Para o painel, em `admin-panel`, use `npm test`, `npm run typecheck` e `npm run build`.
+
 ## Limitações conhecidas
 
 - Não há migrações versionadas. Alterar o bootstrap não atualiza bancos em volumes existentes.
 - Eventos de embarque não têm vínculo explícito com viagem/autor e a deduplicação não é atômica sob concorrência.
+- O OSRM público recebe paradas fictícias e, para o trajeto até a próxima parada, a posição do veículo, inclusive GPS real, conforme escolha do usuário. Coordenadas de paradas manuais não são enviadas; linhas diretas são apenas referências e o GPS não calcula ETA em tempo real.
+- O compartilhamento GPS é opcional e funciona em primeiro plano, inclusive ao trocar entre as abas; é interrompido quando o app vai para segundo plano, a sessão termina ou a viagem deixa de estar ativa. O app não rastreia em segundo plano.
 - O CRUD administrativo permite alterar alguns estados e horários sem passar pelas ações de transição.
 - A consulta do responsável escolhe um passageiro vinculado; seleção de múltiplos filhos não está implementada.
 - Logout remove a sessão do cliente, mas tokens ainda válidos não são revogados no servidor.
-- `/health` não confirma prontidão do MySQL; o Compose não tem healthcheck do banco.
+- As notificações em tempo real são locais ao processo da API; várias instâncias ou alterações feitas diretamente no banco dependem da sincronização periódica do painel (15 segundos). O app atualiza viagens a cada 3 segundos enquanto a tela está ativa.
+- `/health` não confirma prontidão do MySQL; o healthcheck do banco verifica o servidor, e reinícios automáticos do Docker não garantem a ordem das dependências.
 - O domínio inclui dados de crianças, documentos, endereços e um campo facial. Não use dados reais até definir finalidade, acesso, retenção e controles adequados. Revisão de código não comprova conformidade legal.
 
 Esses pontos descrevem o estado observado e orientam tarefas futuras. Implemente somente o que fizer parte do pedido atual.

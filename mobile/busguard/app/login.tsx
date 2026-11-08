@@ -62,8 +62,13 @@ export default function LoginScreen() {
       await login(normalizedEmail, password);
     } catch (caught) {
       if (mounted.current) {
+        const usingDemoAccount = __DEV__ && Object.values(demoCredentials).some((account) => (
+          account.email === normalizedEmail && account.password === password
+        ));
         setError(caught instanceof ApiError && caught.status === 401
-          ? 'E-mail ou senha inválidos. Confira seus dados e tente novamente.'
+          ? usingDemoAccount
+            ? 'A conta de demonstração não está disponível nesta base. Confira se database/init.sql foi carregado ou use uma conta já cadastrada.'
+            : 'E-mail ou senha inválidos. Confira seus dados e tente novamente.'
           : getApiErrorMessage(caught, 'entrar na sua conta'));
       }
     } finally {
