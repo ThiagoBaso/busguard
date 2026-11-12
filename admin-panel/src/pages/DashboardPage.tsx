@@ -3,8 +3,8 @@ import { apiFetch } from '../api';
 import { communicationIsRecent, communicationTime } from '../communication';
 import { Button, EmptyState, LoadingState, PageTitle, Panel, Pill, SummaryCard, formatTime } from '../components';
 import { DashboardMiniMap } from '../DashboardMiniMap';
-import { dateIsToday, useApiData } from '../hooks';
-import type { AccessEvent, Driver, DriverVehicle, LiveVehicleLocation, Passenger, Route, Trip, TripCommunication, User, Vehicle } from '../types';
+import { useApiData } from '../hooks';
+import type { AccessEvent, Driver, DriverVehicle, EventHistoryPage, LiveVehicleLocation, OperationAlerts, Passenger, Route, Trip, TripCommunication, User, Vehicle } from '../types';
 import type { ScreenProps } from '../pageTypes';
 
 type DashboardData = {
@@ -12,10 +12,16 @@ type DashboardData = {
   routes: Route[]; trips: Trip[]; events: AccessEvent[]; locations: LiveVehicleLocation[];
   assignments: DriverVehicle[];
   communications: TripCommunication[];
+  alerts: OperationAlerts;
+  eventSummary: EventHistoryPage['summary'];
 };
 
 const loadDashboard = async (): Promise<DashboardData> => {
-  const [passengers, drivers, users, vehicles, routes, trips, events, locations, assignments, communications] = await Promise.all([
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const day = new URLSearchParams({ limit: '1', today_start: start.toISOString(), today_end: end.toISOString() });
+  const [passengers, drivers, users, vehicles, routes, trips, events, locations, assignments, communications, alerts, history] = await Promise.all([
     apiFetch<Passenger[]>('/admin/passengers?limit=500'),
     apiFetch<Driver[]>('/admin/drivers?limit=500'),
     apiFetch<User[]>('/admin/users?limit=500'),
@@ -26,15 +32,16 @@ const loadDashboard = async (): Promise<DashboardData> => {
     apiFetch<LiveVehicleLocation[]>('/admin/vehicle-locations?limit=100'),
     apiFetch<DriverVehicle[]>('/admin/driver-vehicles?limit=500'),
     apiFetch<TripCommunication[]>('/admin/trip-communications'),
+    apiFetch<OperationAlerts>('/admin/operation-alerts'),
+    apiFetch<EventHistoryPage>(`/admin/event-history?${day}`),
   ]);
-  return { passengers, drivers, users, vehicles, routes, trips, events, locations, assignments, communications };
+  return { passengers, drivers, users, vehicles, routes, trips, events, locations, assignments, communications, alerts, eventSummary: history.summary };
 };
 
 export function DashboardPage({ notify, navigate }: ScreenProps) {
   const { data, loading, error, reload } = useApiData(loadDashboard, ['passengers', 'drivers', 'users', 'vehicles', 'routes', 'trips', 'access_events', 'vehicle_locations', 'driver_vehicles', 'trip_communications']);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15000); return () => window.clearInterval(timer); }, []);
-  const todayEvents = useMemo(() => (data?.events ?? []).filter((event) => event.review_status === 'accepted' && dateIsToday(event.created_at)), [data]);
   const activeTrips = useMemo(() => (data?.trips ?? []).filter((trip) => trip.status === 'in_progress'), [data]);
   const activeLocations = useMemo(() => {
     const activeTripIds = new Set(activeTrips.map((trip) => trip.id));
@@ -66,12 +73,21 @@ export function DashboardPage({ notify, navigate }: ScreenProps) {
           <div className="summary-grid summary-grid-four">
             <SummaryCard label="PASSAGEIROS CADASTRADOS" value={data.passengers.length} detail="Alunos registrados" icon="♙" />
             <SummaryCard label="TOTAL DE VEÍCULOS" value={data.vehicles.length} detail="Ônibus cadastrados" icon="🚌" />
-            <SummaryCard label="VIAGENS EM ANDAMENTO" value={activeTrips.length} detail="Veículos em operação" icon="⇄" />
-            <SummaryCard label="EMBARQUES DO DIA" value={todayEvents.filter((event) => event.action === 'entry').length} detail={`${todayEvents.length} movimentações hoje`} icon="☑" />
+            <SummaryCard label="VIAGENS EM ANDAMENTO" value={data.alerts.active_trips} detail="Veículos em operação" icon="⇄" />
+            <SummaryCard label="EMBARQUES DO DIA" value={data.eventSummary.entries_today} detail={`${data.eventSummary.entries_today + data.eventSummary.exits_today} movimentações hoje`} icon="☑" />
           </div>
 
+          <Panel title="Alertas operacionais" subtitle="Situação da última consulta à API." className="dashboard-alerts-panel">
+            <div className="operation-alert-summary">
+              <button type="button" className="operation-alert-card" onClick={() => navigate('events', undefined, { reviewStatus: 'pending' })}><strong>{data.alerts.pending_events}</strong><span>eventos aguardando revisão</span><span aria-hidden="true">→</span></button>
+              <div className="operation-alert-card"><strong>{data.alerts.stale_communications}</strong><span>viagens sem comunicação recente do app</span></div>
+            </div>
+            {error ? <p className="panel-hint">Não foi possível atualizar os alertas; confira a conexão com a API.</p> : null}
+            {data.alerts.trips.length ? <div className="operation-alert-list">{data.alerts.trips.map((trip) => <div key={trip.trip_id}><span><strong>{trip.vehicle_model} · {trip.vehicle_plate}</strong><small>{trip.route_name} · {trip.received_at ? `Última comunicação: ${communicationTime(trip.received_at)}` : 'Nenhuma comunicação recebida'}</small></span><Button variant="plain" onClick={() => navigate('gps', trip.trip_id)}>Ver viagem →</Button></div>)}{data.alerts.stale_communications > data.alerts.trips.length ? <p className="panel-hint">Mais {data.alerts.stale_communications - data.alerts.trips.length} viagem(ns) sem comunicação recente.</p> : null}</div> : <p className="panel-hint">{data.alerts.stale_communications ? 'Detalhes das viagens indisponíveis nesta consulta.' : 'Nenhuma viagem sem comunicação recente na última consulta.'}</p>}
+          </Panel>
+
           <div className="dashboard-grid">
-            <Panel title="Veículos em andamento" subtitle="Acompanhe as viagens e abra a posição recebida do GPS." className="dashboard-live-panel" action={<Pill tone="success">{activeTrips.length} em operação</Pill>}>
+            <Panel title="Veículos em andamento" subtitle="Acompanhe as viagens e abra a posição recebida do GPS." className="dashboard-live-panel" action={<Pill tone="success">{data.alerts.active_trips} em operação</Pill>}>
               {activeTrips.length ? (
                 <div className="live-trip-list">
                   {activeTrips.slice(0, 4).map((trip) => {

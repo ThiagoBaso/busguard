@@ -1,11 +1,11 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { apiFetch } from '../api';
-import { Button, EmptyState, Field, LoadingState, Modal, PageTitle, Panel, Pill, SelectInput, SummaryCard, TextInput, formatAddress, routeShiftLabel } from '../components';
+import { Button, EmptyState, Field, LoadingState, Modal, PageTitle, Pagination, Panel, Pill, SelectInput, SummaryCard, TextInput, formatAddress, routeShiftLabel } from '../components';
 import { CoordinatesEditor, parseCoordinates } from '../CoordinatesEditor';
 import { RouteMap } from '../RouteMap';
 import { completedMapStops } from '../mapProgress';
 import { digits, useApiData } from '../hooks';
-import type { AccessEvent, Address, LiveVehicleLocation, Passenger, Route, RoutePassenger, RouteShift, RouteStop, Trip } from '../types';
+import type { AccessEvent, Address, LiveVehicleLocation, Passenger, Route, RouteChangePage, RoutePassenger, RouteShift, RouteStop, Trip } from '../types';
 import type { ScreenProps } from '../pageTypes';
 
 type RoutesData = { routes: Route[]; stops: RouteStop[]; addresses: Address[]; passengers: Passenger[]; assignments: RoutePassenger[]; trips: Trip[]; events: AccessEvent[]; locations: LiveVehicleLocation[] };
@@ -13,6 +13,17 @@ type RouteForm = { name: string; description: string; shift: RouteShift; active:
 type AddressForm = { cep: string; rua: string; numero: string; bairro: string; cidade: string; estado: string; complemento: string; latitude: string; longitude: string };
 const initialRoute: RouteForm = { name: '', description: '', shift: 'morning', active: true };
 const initialAddress: AddressForm = { cep: '', rua: '', numero: '', bairro: '', cidade: 'Marília', estado: 'SP', complemento: '', latitude: '', longitude: '' };
+
+function describeRouteChange(state: RouteChangePage['items'][number]['before'], type: 'passenger' | 'stop', passengers: Passenger[], addresses: Address[]) {
+  if (!state) return '—';
+  const route = `Rota #${state.route_id}`;
+  if (type === 'passenger') {
+    const name = passengers.find(item => item.id === state.passenger_id)?.name || `Passageiro #${state.passenger_id}`;
+    return `${route} · ${name} · ${state.stop_id ? `Parada #${state.stop_id}` : 'Sem parada'} · ${state.active ? 'Ativo' : 'Inativo'}`;
+  }
+  const address = addresses.find(item => item.id === state.address_id);
+  return `${route} · ${address ? formatAddress(address) : `Endereço #${state.address_id}`} · Ordem ${state.sequence}`;
+}
 
 const loadRoutes = async (): Promise<RoutesData> => {
   const [routes, stops, addresses, passengers, assignments, trips, events, locations] = await Promise.all([
@@ -44,6 +55,18 @@ export function RoutesPage({ notify }: ScreenProps) {
   const [coordinateAddress, setCoordinateAddress] = useState<Address | null>(null);
   const [coordinateForm, setCoordinateForm] = useState({ latitude: '', longitude: '' });
   const [busy, setBusy] = useState(false);
+  const [historyRoute, setHistoryRoute] = useState<Route | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [routeHistory, setRouteHistory] = useState<RouteChangePage | null>(null);
+  const [historyError, setHistoryError] = useState('');
+  useEffect(() => {
+    if (!historyRoute) return;
+    const controller = new AbortController();
+    setRouteHistory(null); setHistoryError('');
+    void apiFetch<RouteChangePage>(`/admin/routes/${historyRoute.id}/changes?limit=10&offset=${(historyPage - 1) * 10}`, { signal: controller.signal })
+      .then(setRouteHistory).catch((error) => { if (!controller.signal.aborted) setHistoryError(error instanceof Error ? error.message : 'Não foi possível carregar o histórico.'); });
+    return () => controller.abort();
+  }, [historyRoute, historyPage]);
   const routes = data?.routes ?? [];
   const selected = routes.find((route) => route.id === selectedId) ?? routes[0] ?? null;
   const addressById = useMemo(() => new Map((data?.addresses ?? []).map((address) => [address.id, address])), [data]);
@@ -220,23 +243,24 @@ export function RoutesPage({ notify }: ScreenProps) {
               </div>;
             })}</div> : <EmptyState title="Nenhuma rota cadastrada" message="Crie uma rota para organizar as paradas e passageiros." action={<Button onClick={() => openRouteForm()}>Cadastrar rota</Button>} />}
           </Panel>
-          <Panel title="Mapa da rota selecionada" action={selected ? <Pill tone="warning">{selected.name}</Pill> : undefined}>
+          <Panel title="Mapa da rota selecionada" action={selected ? <div className="route-heading-actions"><Pill tone="warning">{selected.name}</Pill><Button variant="plain" onClick={() => { setHistoryPage(1); setHistoryRoute(selected); }}>Histórico de alterações</Button></div> : undefined}>
             {selected ? <RouteMap routeId={selected.id} stops={selectedStops} addresses={data.addresses} assignments={selectedPassengerLinks} passengers={data.passengers} completedStopIds={completedStops} activeTripId={liveTrip?.id ?? null} locationUpdatedAt={liveLocation?.recorded_at ?? null} /> : <EmptyState title="Selecione uma rota" message="O trajeto e as paradas aparecerão aqui." />}
           </Panel>
         </div>
 
         <div className="split-grid route-details-grid">
-          <Panel title="Cadastro e associação de paradas" subtitle={selected ? `${selected.name} · ${selectedStops.length} paradas` : 'Selecione uma rota'} action={selected ? <Button onClick={() => setStopModal(true)}>＋ Nova parada</Button> : undefined}>
+          <Panel title="Cadastro e associação de paradas" subtitle={selected ? `${selected.name} · ${selectedStops.length} paradas` : 'Selecione uma rota'} action={selected ? <Button disabled={Boolean(liveTrip)} onClick={() => setStopModal(true)}>＋ Nova parada</Button> : undefined}>
+            {liveTrip ? <p className="panel-hint">Paradas e passageiros podem ser alterados após o encerramento das viagens em andamento nesta rota.</p> : null}
             {selected ? selectedStops.length ? <div className="stop-list">{selectedStops.map((stop, index) => {
               const address = addressById.get(stop.address_id);
               const linked = selectedPassengerLinks.filter((link) => link.stop_id === stop.id).length;
-              return <div className="stop-row" key={stop.id}><span className="stop-number">{String(stop.sequence).padStart(2, '0')}</span><div><strong>{formatAddress(address)}</strong><small>{linked} aluno(s) · {address?.latitude == null || address.longitude == null ? 'sem coordenadas' : address.coordinate_source === 'demo' ? 'posição simulada' : 'posição informada'}</small></div><div className="stop-actions"><Button variant="quiet" aria-label={`Subir parada ${stop.sequence}`} disabled={busy || index === 0} onClick={() => void moveStop(index, -1)}>↑</Button><Button variant="quiet" aria-label={`Descer parada ${stop.sequence}`} disabled={busy || index === selectedStops.length - 1} onClick={() => void moveStop(index, 1)}>↓</Button>{address ? <Button variant="quiet" onClick={() => editCoordinates(address)}>Localizar</Button> : null}<Button variant="danger" onClick={() => void removeStop(stop)}>Remover</Button></div></div>;
-            })}</div> : <EmptyState title="Rota sem paradas" message="Adicione endereços para registrar os pontos de passagem." action={<Button onClick={() => setStopModal(true)}>Adicionar parada</Button>} /> : <EmptyState title="Nenhuma rota selecionada" message="Cadastre uma rota para configurar as paradas." />}
+              return <div className="stop-row" key={stop.id}><span className="stop-number">{String(stop.sequence).padStart(2, '0')}</span><div><strong>{formatAddress(address)}</strong><small>{linked} aluno(s) · {address?.latitude == null || address.longitude == null ? 'sem coordenadas' : address.coordinate_source === 'demo' ? 'posição simulada' : 'posição informada'}</small></div><div className="stop-actions"><Button variant="quiet" aria-label={`Subir parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === 0} onClick={() => void moveStop(index, -1)}>↑</Button><Button variant="quiet" aria-label={`Descer parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === selectedStops.length - 1} onClick={() => void moveStop(index, 1)}>↓</Button>{address ? <Button variant="quiet" disabled={Boolean(liveTrip)} onClick={() => editCoordinates(address)}>Localizar</Button> : null}<Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removeStop(stop)}>Remover</Button></div></div>;
+            })}</div> : <EmptyState title="Rota sem paradas" message="Adicione endereços para registrar os pontos de passagem." action={<Button disabled={Boolean(liveTrip)} onClick={() => setStopModal(true)}>Adicionar parada</Button>} /> : <EmptyState title="Nenhuma rota selecionada" message="Cadastre uma rota para configurar as paradas." />}
           </Panel>
           <Panel title="Passageiros vinculados" subtitle={selected ? `${selectedPassengerLinks.length} alunos associados a esta rota` : 'Selecione uma rota'}>
             {selected ? <>
-              {eligiblePassengers.length ? <form className="route-passenger-form" onSubmit={(event) => void addPassenger(event)}><SelectInput value={passengerId} onChange={(event) => { const value = event.target.value; setPassengerId(value); const passenger = data.passengers.find((item) => item.id === Number(value)); setPassengerStopId(String(selectedStops.find((stop) => stop.address_id === passenger?.addresses_id)?.id ?? '')); }} required><option value="">Selecionar passageiro</option>{eligiblePassengers.map((passenger) => <option value={passenger.id} key={passenger.id}>{passenger.name}</option>)}</SelectInput><SelectInput aria-label="Parada de embarque" value={passengerStopId} onChange={(event) => setPassengerStopId(event.target.value)}><option value="">Sem parada definida</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button type="submit" loading={busy}>Associar</Button></form> : <p className="panel-hint">Todos os passageiros disponíveis já estão associados.</p>}
-              {selectedPassengerLinks.length ? <div className="assigned-list">{selectedPassengerLinks.map((link) => { const passenger = data.passengers.find((item) => item.id === link.passenger_id); return <div key={link.id}><span>{passenger?.name || `Passageiro ${link.passenger_id}`}</span><SelectInput aria-label={`Parada de ${passenger?.name || link.passenger_id}`} value={link.stop_id ?? ''} onChange={(event) => void changePassengerStop(link, event.target.value)}><option value="">Sem parada</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button variant="danger" onClick={() => void removePassenger(link.id)}>Remover</Button></div>; })}</div> : <small className="muted-copy">Ainda não há passageiros vinculados.</small>}
+              {liveTrip ? <p className="panel-hint">Os vínculos ficam disponíveis para alteração após o encerramento da viagem.</p> : eligiblePassengers.length ? <form className="route-passenger-form" onSubmit={(event) => void addPassenger(event)}><SelectInput value={passengerId} onChange={(event) => { const value = event.target.value; setPassengerId(value); const passenger = data.passengers.find((item) => item.id === Number(value)); setPassengerStopId(String(selectedStops.find((stop) => stop.address_id === passenger?.addresses_id)?.id ?? '')); }} required><option value="">Selecionar passageiro</option>{eligiblePassengers.map((passenger) => <option value={passenger.id} key={passenger.id}>{passenger.name}</option>)}</SelectInput><SelectInput aria-label="Parada de embarque" value={passengerStopId} onChange={(event) => setPassengerStopId(event.target.value)}><option value="">Sem parada definida</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button type="submit" loading={busy}>Associar</Button></form> : <p className="panel-hint">Todos os passageiros disponíveis já estão associados.</p>}
+              {selectedPassengerLinks.length ? <div className="assigned-list">{selectedPassengerLinks.map((link) => { const passenger = data.passengers.find((item) => item.id === link.passenger_id); return <div key={link.id}><span>{passenger?.name || `Passageiro ${link.passenger_id}`}</span><SelectInput disabled={Boolean(liveTrip)} aria-label={`Parada de ${passenger?.name || link.passenger_id}`} value={link.stop_id ?? ''} onChange={(event) => void changePassengerStop(link, event.target.value)}><option value="">Sem parada</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removePassenger(link.id)}>Remover</Button></div>; })}</div> : <small className="muted-copy">Ainda não há passageiros vinculados.</small>}
             </> : <EmptyState title="Selecione uma rota" message="Os passageiros vinculados aparecerão aqui." />}
           </Panel>
         </div>
@@ -249,6 +273,11 @@ export function RoutesPage({ notify }: ScreenProps) {
           <Field label="Situação"><SelectInput value={routeForm.active ? 'true' : 'false'} onChange={(event) => setRouteForm({ ...routeForm, active: event.target.value === 'true' })}><option value="true">Ativa</option><option value="false">Inativa</option></SelectInput></Field>
           <Field label="Descrição" className="field-span-two"><TextInput value={routeForm.description} onChange={(event) => setRouteForm({ ...routeForm, description: event.target.value })} maxLength={255} placeholder="Escola ou informação de referência" /></Field>
         </div>
+      </Modal> : null}
+
+      {historyRoute ? <Modal title="Histórico de alterações" eyebrow={historyRoute.name} onClose={() => setHistoryRoute(null)} wide>
+        <p className="panel-hint">Alterações registradas a partir da ativação deste histórico. Viagens antigas não são reconstruídas.</p>
+        {historyError ? <div className="inline-error">{historyError}</div> : routeHistory ? routeHistory.items.length ? <div><div className="event-timeline">{routeHistory.items.map(item => <div key={item.id} className="event-timeline-item"><strong>{item.entity_type === 'passenger' ? 'Vínculo de passageiro' : 'Parada'} #{item.entity_id} · {item.operation === 'create' ? 'criado' : item.operation === 'delete' ? 'removido' : 'alterado'}</strong><small>{item.actor_name || (item.actor_id ? `Usuário #${item.actor_id}` : 'Autor não informado')} · {new Date(item.created_at).toLocaleString('pt-BR')}</small><small>Antes: {describeRouteChange(item.before, item.entity_type, data?.passengers ?? [], data?.addresses ?? [])}</small><small>Depois: {describeRouteChange(item.after, item.entity_type, data?.passengers ?? [], data?.addresses ?? [])}</small></div>)}</div><Pagination page={historyPage} pages={Math.max(1, Math.ceil(routeHistory.total / 10))} onChange={setHistoryPage} count={routeHistory.items.length} noun="alterações" /></div> : <p className="panel-hint">Nenhuma alteração registrada para esta rota.</p> : <LoadingState label="Carregando histórico…" />}
       </Modal> : null}
 
       {stopModal ? <Modal title="Adicionar parada" eyebrow={selected?.name || 'ROTA'} onClose={() => setStopModal(false)} onSubmit={(event) => void addStop(event)} submitLabel="Adicionar parada" busy={busy}>

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.access_events import AccessEvent, AccessEventReview
 from app.models.route_passengers import RoutePassenger
 from app.models.trips import Trip
+from app.models.trip_manifests import TripManifest, TripManifestPassenger
 from app.schemas.access_events import TripEventCreate
 from app.services.trip_service import CurrentTripNotFoundError, PassengerNotInTripError, _authorized_trip_query, _latest_event_for_passenger
 
@@ -26,10 +27,17 @@ def _same_request(event: AccessEvent, trip_id: int, user_id: int, data: TripEven
 
 def create_trip_event(db: Session, trip_id: int, data: TripEventCreate, user_id: int, role: str):
     # Uma leitura bloqueante no MySQL serializa eventos e revisões da viagem.
-    row = _authorized_trip_query(db, user_id, role, active_only=False).filter(Trip.id == trip_id).with_for_update().first()
-    if not row:
+    trip = db.query(Trip).filter(Trip.id == trip_id).with_for_update().first()
+    if not trip:
         raise CurrentTripNotFoundError
-    trip = row[0]
+    manifest = db.get(TripManifest, trip_id)
+    if manifest:
+        authorized_user = manifest.driver_user_id if role == 'driver' else manifest.supervisor_user_id if role == 'supervisor' else None
+        if authorized_user != user_id:
+            raise CurrentTripNotFoundError
+    elif not _authorized_trip_query(db, user_id, role, active_only=False).filter(Trip.id == trip_id).with_for_update().first():
+        # Viagens anteriores à migração não possuem histórico confiável dos vínculos.
+        raise CurrentTripNotFoundError
     occurred = data.occurred_at.astimezone(timezone.utc).replace(tzinfo=None)
     event_uuid = str(data.event_uuid)
     existing = db.query(AccessEvent).filter(AccessEvent.event_uuid == event_uuid).with_for_update().first()
@@ -38,7 +46,8 @@ def create_trip_event(db: Session, trip_id: int, data: TripEventCreate, user_id:
             raise EventConflictError('Identificador já utilizado por outro evento.')
         return existing, True
 
-    assignment = (db.query(RoutePassenger).filter(RoutePassenger.route_id == trip.route_id,
+    assignment = (db.get(TripManifestPassenger, (trip_id, data.passenger_id)) if manifest else
+                  db.query(RoutePassenger).filter(RoutePassenger.route_id == trip.route_id,
                   RoutePassenger.passenger_id == data.passenger_id, RoutePassenger.active.is_(True)).with_for_update().first())
     if not assignment:
         raise PassengerNotInTripError
@@ -54,7 +63,8 @@ def create_trip_event(db: Session, trip_id: int, data: TripEventCreate, user_id:
     if pending:
         reason = 'Há outro evento deste passageiro aguardando revisão.'
     elif trip.status == 'completed':
-        reason = 'Evento recebido após o encerramento da viagem.'
+        reason = ('Evento recebido após o encerramento da viagem.' if manifest else
+                  'Evento recebido após o encerramento; vínculos históricos indisponíveis.')
     elif abs((now - occurred).total_seconds()) > 120:
         reason = 'Horário informado pelo dispositivo precisa de confirmação.'
     elif trip.started_at and occurred < trip.started_at - timedelta(minutes=2):

@@ -15,6 +15,7 @@ from app.models.users import User
 from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
 from app.models.trip_communications import TripCommunication
+from app.models.trip_manifests import RouteChangeAudit, TripManifest, TripManifestPassenger
 
 __all__ = [
     "AccessEvent",
@@ -35,4 +36,7 @@ __all__ = [
     "Vehicle",
     "VehicleLocation",
     "TripCommunication",
+    "TripManifest",
+    "TripManifestPassenger",
+    "RouteChangeAudit",
 ]

@@ -26,6 +26,7 @@ from app.models.addresses import Address
 from app.models.route_stops import RouteStop
 from app.models.route_passengers import RoutePassenger
 from app.models.access_events import AccessEvent
+from app.models.trip_manifests import TripManifest, TripManifestPassenger
 from app.schemas.vehicle_locations import VehicleLocationCreate
 
 
@@ -82,6 +83,8 @@ class MobileAuthorizationTests(unittest.TestCase):
         RouteStop.__table__.create(self.engine)
         RoutePassenger.__table__.create(self.engine)
         AccessEvent.__table__.create(self.engine)
+        TripManifest.__table__.create(self.engine)
+        TripManifestPassenger.__table__.create(self.engine)
         self.db = Session(self.engine)
 
     def tearDown(self):

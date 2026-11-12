@@ -1,7 +1,11 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from app.database import get_db
 from app.routes import admin
 from app.routes import driver
 from app.routes import passengers
@@ -37,3 +41,12 @@ app.include_router(vehicles.router)
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get('/ready')
+def readiness_check(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text('SELECT 1'))
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail='Database unavailable')
+    return {'status': 'ready'}

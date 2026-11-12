@@ -32,7 +32,9 @@ docker compose ps
 
 A API fica em <http://localhost:8000>; a documentação interativa fica em <http://localhost:8000/docs>; o painel abre em <http://localhost:5173>. Quando o serviço `megamock` inicia, ele executa o único arquivo [database/init.sql](database/init.sql): cria ou atualiza o esquema e substitui os registros de `app_db` por dados de demonstração. A API aguarda a conclusão da carga. Os contêineres usam `restart: unless-stopped`, então voltam quando o Docker inicia; depois de aplicar uma vez com `docker compose up -d --build`, você não precisa iniciar o Vite manualmente.
 
-A API também executa a migração aditiva `python -m app.scripts.migrate_access_events_v1` antes de iniciar. Essa migração é separada da carga fictícia e preserva os registros existentes. Para aplicá-la em outro ambiente, faça e valide um backup, configure `DATABASE_URL` para o banco correto e execute o comando no diretório `backend`; **não use `init.sql` como migração de dados reais**. Reiniciar apenas um contêiner de API já criado com `docker compose restart api` não inicia o megamock, mas alterar o comando de inicialização no Compose exige recriar o contêiner da API para que o novo comando entre em vigor; evite iniciar ou recriar o megamock se precisar preservar os dados locais.
+A API executa as migrações aditivas `python -m app.scripts.migrate_access_events_v1` e `python -m app.scripts.migrate_trip_manifests_v2` antes de iniciar. Elas são separadas da carga fictícia e preservam os registros existentes. Para aplicá-las em outro ambiente, faça e valide um backup, configure `DATABASE_URL` para o banco correto e execute os dois comandos no diretório `backend`; **não use `init.sql` como migração de dados reais**. Reiniciar apenas um contêiner de API já criado com `docker compose restart api` não inicia o megamock, mas alterar o comando de inicialização no Compose exige recriar o contêiner da API para que o novo comando entre em vigor; evite iniciar ou recriar o megamock se precisar preservar os dados locais.
+
+As viagens iniciadas depois da migração guardam seus vínculos de motorista, supervisor e passageiros, incluindo o identificador e a ordem da parada. Durante uma viagem, alterações nos passageiros ou nas paradas da rota ficam bloqueadas até o encerramento. O painel também apresenta o histórico de alterações posteriores em passageiros e paradas, com autor e dados anteriores e posteriores. Viagens e alterações anteriores não recebem históricos presumidos; o manifesto não é uma cópia histórica dos endereços ou das coordenadas.
 
 Para recarregar a fixture manualmente, execute `docker compose down` e depois `docker compose up -d --build`. Sem a opção `-v`, o volume do MySQL permanece; os registros de `app_db` são substituídos na próxima inicialização.
 
@@ -60,6 +62,17 @@ npm run dev
 ```
 
 O painel abre em <http://localhost:5173> e usa `http://localhost:8000` por padrão. Para outro endereço, copie `.env.example` para `.env` e ajuste `VITE_API_BASE_URL`. O acesso exige uma conta existente com perfil `admin`; o login aceita e-mail ou CPF.
+
+### Verificações isoladas
+
+Com Docker e as dependências de `backend/requirements-test.txt` instaladas, execute:
+
+```powershell
+Set-Location backend
+python -B scripts/verify_reliability.py
+```
+
+A rotina cria um MySQL descartável sem volumes compartilhados, carrega dados fictícios, aplica as migrações, restaura um backup em outro banco do contêiner e testa permissões, concorrência, revisão, acompanhamento e indisponibilidade do banco. Ela encerra o contêiner ao terminar e não usa o Compose nem o `DATABASE_URL` do projeto. A execução também está configurada em `.github/workflows/reliability.yml`. Para conferir a interface em telefones físicos, siga [o roteiro de validação](docs/validacao_aparelhos.md).
 
 Em desenvolvimento, o painel preenche a conta de demonstração do megamock: `admin@transportescolar.com` / `Busguard@123`. Em produção, os campos começam vazios.
 

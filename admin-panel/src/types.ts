@@ -54,6 +54,29 @@ export interface AccessEvent {
   review_status: 'accepted' | 'pending' | 'rejected'; review_reason: string | null;
 }
 export interface AccessEventReview { id: number; event_id: number; reviewer_id: number; decision: 'accepted' | 'rejected'; reason: string; created_at: string }
+export interface EventHistoryItem extends AccessEvent {
+  passenger_name: string; vehicle_model: string; vehicle_plate: string; actor_name: string | null;
+  review: AccessEventReview | null; reviewer_name: string | null;
+}
+export interface EventHistoryPage {
+  items: EventHistoryItem[]; total: number; limit: number; offset: number;
+  summary: { pending: number; entries_today: number; exits_today: number };
+}
+export interface TripManifest {
+  trip_id: number; route_id: number; vehicle_id: number; driver_user_id: number; driver_name: string | null;
+  supervisor_user_id: number | null; supervisor_name: string | null; captured_at: string;
+  passengers: Array<{ passenger_id: number; name: string; stop_id: number | null; stop_sequence: number | null }>;
+}
+export interface RouteChangePage {
+  total: number; limit: number; offset: number;
+  items: Array<{ id: number; entity_type: 'passenger' | 'stop'; entity_id: number; operation: 'create' | 'update' | 'delete';
+    actor_id: number | null; actor_name: string | null; before: Record<string, string | number | boolean | null> | null;
+    after: Record<string, string | number | boolean | null> | null; created_at: string }>;
+}
+export interface OperationAlerts {
+  pending_events: number; active_trips: number; stale_communications: number;
+  trips: Array<TripCommunication & { vehicle_model: string; vehicle_plate: string; route_name: string }>;
+}
 export interface TripCommunication { trip_id: number; received_at: string | null; status: 'recent' | 'stale' | 'unknown'; stale_after_seconds: number }
 export interface VehicleLocation {
   id: number; trip_id: number; latitude: number; longitude: number;

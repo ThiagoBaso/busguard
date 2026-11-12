@@ -48,6 +48,7 @@ Confira os manifests antes de atualizar bibliotecas ou assumir versões efetivas
 | Endpoint | Acesso e uso |
 | --- | --- |
 | `GET /health` | Público; verifica a API, não a conexão com o banco. |
+| `GET /ready` | Público; verifica também se o banco responde, retornando 503 em falha. |
 | `POST /auth/login` e `GET /auth/me` | Login por JSON; consulta o usuário e o perfil atuais. |
 | `POST /driver/trips/{trip_id}/location` | Motorista ou supervisor autorizado; grava posição GPS da viagem ativa. |
 | `GET /driver/trips/current` | Motorista ou supervisor vinculado à viagem. |
@@ -57,6 +58,10 @@ Confira os manifests antes de atualizar bibliotecas ou assumir versões efetivas
 | `POST /driver/trips/{trip_id}/events` | Operador vinculado; recebe UUID, passageiro, ação e horário com fuso. Reenvios idênticos retornam o mesmo evento; divergências ficam pendentes de revisão. |
 | `POST /driver/trips/current/heartbeat` | Motorista vinculado; registra comunicação recebida enquanto o aplicativo está em primeiro plano, independentemente do GPS. |
 | `GET /admin/trip-communications` | Admin; mostra a última comunicação recebida e a situação de atualização. |
+| `GET /admin/operation-alerts` | Admin; contagem de pendências e viagens sem comunicação recente. |
+| `GET /admin/event-history` | Admin; busca, filtros, paginação e linha do tempo por viagem e passageiro, incluindo a revisão. |
+| `GET /admin/trips/{trip_id}/manifest` | Admin; vínculos capturados ao iniciar a viagem, quando disponíveis. |
+| `GET /admin/routes/{route_id}/changes` | Admin; histórico paginado de alterações de passageiros e paradas, com autor e dados anteriores e posteriores. |
 | `POST /admin/access-events/{id}/review` | Admin; aceita ou rejeita evento pendente com motivo obrigatório e registro do revisor. |
 | `GET /responsible/children/current-trip` | Responsável com vínculo ao passageiro; admin também é aceito pela rota. |
 | `/admin/...` | Cadastros e vínculos; requer perfil admin. |
@@ -78,6 +83,8 @@ O esquema cobre usuários, passageiros, responsáveis, endereços, motoristas, C
 
 A migração aditiva `python -m app.scripts.migrate_access_events_v1` é separada da fixture, pode ser repetida e não apaga registros. No Compose de demonstração, a API a executa após a carga do megamock, antes de iniciar o servidor. Para um banco existente, faça backup e execute a migração explicitamente antes de atualizar a API; não execute `init.sql` para migrar dados reais. Eventos legados permanecem sem viagem e autor quando não há vínculo registrado, e não são usados para inferir a situação de uma viagem.
 
+A migração `python -m app.scripts.migrate_trip_manifests_v2` cria as tabelas de vínculos capturados no início e de auditoria de mudanças da rota. Para viagens iniciadas depois da migração, registre motorista, supervisor e passageiros com identificador e ordem da parada na mesma transação do início; esses vínculos são usados ao analisar eventos atrasados, mesmo após alterações posteriores na rota. A auditoria registra autor e dados anteriores e posteriores de mudanças em passageiros e paradas; endereços e coordenadas não são copiados historicamente. Viagens e alterações anteriores não são reconstruídas. Durante uma viagem, mudanças de passageiros e paradas da rota são bloqueadas. Viagens iniciadas ou encerradas não podem ser editadas ou excluídas pelo CRUD genérico.
+
 As oito rotas da fixture usam pontos simulados sobre vias mapeadas de Marília; têm nove paradas e cerca de 2,5 a 4,7 km cada. Os nomes das vias vêm do mapa, mas números, CEPs, passageiros e escolas são fictícios; as coordenadas não identificam residências ou escolas reais.
 
 ## Desenvolvimento e verificações
@@ -94,18 +101,19 @@ Para o app, em `mobile/busguard`, `npm test` executa a suíte Node existente e `
 
 Para o painel, em `admin-panel`, use `npm test`, `npm run typecheck` e `npm run build`.
 
+`python -B scripts/verify_reliability.py`, executado em `backend` com Docker e dependências de teste disponíveis, cria um MySQL descartável sem volumes compartilhados, testa migrações, restauração, API, concorrência e indisponibilidade. O fluxo também roda em `.github/workflows/reliability.yml`. A validação manual com aparelhos é descrita em `docs/validacao_aparelhos.md`.
+
 ## Limitações conhecidas
 
-- A migração de eventos v1 é aditiva e específica do MySQL; ainda não há uma estrutura geral de migrações versionadas para os demais modelos.
+- As migrações de eventos v1 e vínculos v2 são aditivas e específicas do MySQL; ainda não há uma estrutura geral de migrações versionadas para os demais modelos.
 - Registros legados sem viagem explícita não determinam a situação da viagem; os horários informados pelo cliente não provam quando um evento ocorreu. Eventos tardios, repetidos ou fora de ordem são revisados manualmente. Não há fila offline persistente ou autenticação offline; o UUID de uma tentativa é mantido em memória apenas enquanto a tela existir.
 - A comunicação reportada depende do app do motorista em primeiro plano e não prova que todos os eventos ou posições foram recebidos. O limite de alerta é configurável por `COMMUNICATION_STALE_SECONDS` (padrão 300 segundos).
 - O OSRM público recebe paradas fictícias e, para o trajeto até a próxima parada, a posição do veículo, inclusive GPS real, conforme escolha do usuário. Coordenadas de paradas manuais não são enviadas; linhas diretas são apenas referências e o GPS não calcula ETA em tempo real.
 - O compartilhamento GPS é opcional e funciona em primeiro plano, inclusive ao trocar entre as abas; é interrompido quando o app vai para segundo plano, a sessão termina ou a viagem deixa de estar ativa. O app não rastreia em segundo plano.
-- O CRUD administrativo permite alterar alguns estados e horários sem passar pelas ações de transição.
 - A consulta do responsável escolhe um passageiro vinculado; seleção de múltiplos filhos não está implementada.
 - Logout remove a sessão do cliente, mas tokens ainda válidos não são revogados no servidor.
 - As notificações em tempo real são locais ao processo da API; várias instâncias ou alterações feitas diretamente no banco dependem da sincronização periódica do painel (15 segundos). O app atualiza viagens a cada 3 segundos enquanto a tela está ativa.
-- `/health` não confirma prontidão do MySQL; o healthcheck do banco verifica o servidor, e reinícios automáticos do Docker não garantem a ordem das dependências.
+- `/health` não confirma prontidão do MySQL; `/ready` consulta o banco. Reinícios automáticos do Docker não garantem a ordem das dependências.
 - O domínio inclui dados de crianças, documentos, endereços e um campo facial. Não use dados reais até definir finalidade, acesso, retenção e controles adequados. Revisão de código não comprova conformidade legal.
 
 Esses pontos descrevem o estado observado e orientam tarefas futuras. Implemente somente o que fizer parte do pedido atual.

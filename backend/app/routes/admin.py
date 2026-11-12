@@ -1,6 +1,8 @@
 from typing import Literal
+from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import AwareDatetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,7 @@ from app.models.users import User
 from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
 from app.models.trip_communications import TripCommunication
+from app.models.trip_manifests import RouteChangeAudit, TripManifest, TripManifestPassenger
 from app.schemas.addresses import AddressCreate, AddressRead, AddressUpdate
 from app.schemas.access_events import AccessEventRead, EventReviewCreate, EventReviewRead
 from app.schemas.cnh import CnhCreate, CnhRead, CnhUpdate
@@ -75,12 +78,79 @@ from app.services.routing_service import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+@router.get('/event-history')
+def get_event_history(
+    limit: int = Query(default=10, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, max_length=100), action: Literal['entry', 'exit'] | None = None,
+    review_status: Literal['pending', 'accepted', 'rejected'] | None = None,
+    trip_id: int | None = Query(default=None, gt=0), passenger_id: int | None = Query(default=None, gt=0),
+    order: Literal['recent', 'chronological'] = 'recent', today_start: AwareDatetime | None = None,
+    today_end: AwareDatetime | None = None, db: Session = Depends(get_db), current_user=Depends(require_role('admin')),
+):
+    from app.services.event_history import event_history
+    if (today_start is None) != (today_end is None):
+        raise HTTPException(status_code=422, detail='Informe início e fim do dia juntos.')
+    if today_start and today_end and not timedelta(0) < today_end - today_start <= timedelta(hours=26):
+        raise HTTPException(status_code=422, detail='Intervalo do dia inválido.')
+    return event_history(db, limit=limit, offset=offset, search=search, action=action,
+                         review_status=review_status, trip_id=trip_id, passenger_id=passenger_id,
+                         order=order, today_start=today_start, today_end=today_end)
+
+
+@router.get('/operation-alerts')
+def get_operation_alerts(db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    from app.services.communication_status import describe_communication
+    pending = db.query(func.count(AccessEvent.id)).filter(AccessEvent.review_status == 'pending').scalar() or 0
+    rows = (db.query(Trip, Vehicle, Route, TripCommunication).join(Vehicle, Vehicle.id == Trip.vehicle_id)
+            .join(Route, Route.id == Trip.route_id).outerjoin(TripCommunication, TripCommunication.trip_id == Trip.id)
+            .filter(Trip.status == 'in_progress').order_by(Trip.id).all())
+    alerts = []
+    for trip, vehicle, route, communication in rows:
+        info = describe_communication(communication.received_at if communication else None)
+        if info['status'] != 'recent':
+            alerts.append({'trip_id': trip.id, 'vehicle_model': vehicle.model, 'vehicle_plate': vehicle.plate,
+                           'route_name': route.name, **info})
+    return {'pending_events': pending, 'active_trips': len(rows), 'stale_communications': len(alerts), 'trips': alerts[:5]}
+
+
 @router.get('/trip-communications')
 def list_trip_communications(db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
     from app.services.communication_status import describe_communication
     rows = (db.query(TripCommunication).join(Trip, Trip.id == TripCommunication.trip_id)
             .filter(Trip.status == 'in_progress').all())
     return [{'trip_id': row.trip_id, **describe_communication(row.received_at)} for row in rows]
+
+
+@router.get('/trips/{trip_id}/manifest')
+def get_trip_manifest(trip_id: int, db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    manifest = db.get(TripManifest, trip_id)
+    if not manifest:
+        raise HTTPException(status_code=404, detail='Histórico de vínculos indisponível para esta viagem.')
+    passengers = (db.query(TripManifestPassenger, Passenger.name).join(Passenger, Passenger.id == TripManifestPassenger.passenger_id)
+                  .filter(TripManifestPassenger.trip_id == trip_id).order_by(TripManifestPassenger.stop_sequence, Passenger.name).all())
+    driver = db.get(User, manifest.driver_user_id)
+    supervisor = db.get(User, manifest.supervisor_user_id) if manifest.supervisor_user_id else None
+    return {'trip_id': trip_id, 'route_id': manifest.route_id, 'vehicle_id': manifest.vehicle_id,
+            'driver_user_id': manifest.driver_user_id, 'driver_name': driver.name if driver else None,
+            'supervisor_user_id': manifest.supervisor_user_id, 'supervisor_name': supervisor.name if supervisor else None,
+            'captured_at': manifest.captured_at.isoformat() + 'Z',
+            'passengers': [{'passenger_id': link.passenger_id, 'name': name, 'stop_id': link.stop_id,
+                            'stop_sequence': link.stop_sequence} for link, name in passengers]}
+
+
+@router.get('/routes/{route_id}/changes')
+def get_route_changes(route_id: int, limit: int = Query(default=10, ge=1, le=100), offset: int = Query(default=0, ge=0),
+                      db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    if not db.get(Route, route_id):
+        raise _not_found()
+    query = db.query(RouteChangeAudit).filter(RouteChangeAudit.route_id == route_id)
+    total = query.count()
+    rows = query.order_by(RouteChangeAudit.id.desc()).offset(offset).limit(limit).all()
+    return {'total': total, 'limit': limit, 'offset': offset,
+            'items': [{'id': item.id, 'entity_type': item.entity_type, 'entity_id': item.entity_id,
+                       'operation': item.operation, 'actor_id': item.actor_id, 'actor_name': item.actor_name,
+                       'before': item.before_data, 'after': item.after_data,
+                       'created_at': item.created_at.isoformat() + 'Z'} for item in rows]}
 
 
 @router.get("/access-events", response_model=list[AccessEventRead])
@@ -423,7 +493,7 @@ def get_route_geometry(route_id: int, db: Session = Depends(get_db), current_use
 @router.post("/routes/{route_id}/stops/reorder", response_model=list[RouteStopRead])
 def reorder_stops(route_id: int, data: RouteStopOrder, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     try:
-        return reorder_route_stops(db, route_id, data.stop_ids)
+        return reorder_route_stops(db, route_id, data.stop_ids, current_user['id'])
     except AdminNotFoundError:
         raise _not_found()
     except AdminValidationError as exc:
@@ -434,17 +504,17 @@ def reorder_stops(route_id: int, data: RouteStopOrder, db: Session = Depends(get
 
 @router.post("/route-stops", response_model=RouteStopRead, status_code=status.HTTP_201_CREATED)
 def create_route_stop(data: RouteStopCreate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _create(db, RouteStop, data)
+    return _create(db, RouteStop, data, current_user['id'])
 
 
 @router.put("/route-stops/{record_id}", response_model=RouteStopRead)
 def update_route_stop(record_id: int, data: RouteStopUpdate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _update(db, RouteStop, record_id, data)
+    return _update(db, RouteStop, record_id, data, current_user['id'])
 
 
 @router.delete("/route-stops/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_route_stop(record_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _delete(db, RouteStop, record_id)
+    return _delete(db, RouteStop, record_id, current_user['id'])
 
 
 @router.get("/route-passengers", response_model=list[RoutePassengerRead])
@@ -454,17 +524,17 @@ def list_route_passengers(limit: int = 100, offset: int = 0, db: Session = Depen
 
 @router.post("/route-passengers", response_model=RoutePassengerRead, status_code=status.HTTP_201_CREATED)
 def create_route_passenger(data: RoutePassengerCreate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _create(db, RoutePassenger, data)
+    return _create(db, RoutePassenger, data, current_user['id'])
 
 
 @router.put("/route-passengers/{record_id}", response_model=RoutePassengerRead)
 def update_route_passenger(record_id: int, data: RoutePassengerUpdate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _update(db, RoutePassenger, record_id, data)
+    return _update(db, RoutePassenger, record_id, data, current_user['id'])
 
 
 @router.delete("/route-passengers/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_route_passenger(record_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    return _delete(db, RoutePassenger, record_id)
+    return _delete(db, RoutePassenger, record_id, current_user['id'])
 
 
 @router.get("/supervisors", response_model=list[SupervisorRead])
@@ -522,18 +592,20 @@ def cancel_trip(trip_id: int, db: Session = Depends(get_db), current_user=Depend
     return _trip_action(cancel_trip_service, db, trip_id)
 
 
-def _create(db: Session, model, data):
+def _create(db: Session, model, data, actor_id: int | None = None):
     try:
-        return create_record(db, model, data)
+        return create_record(db, model, data, actor_id=actor_id)
     except AdminConflictError:
         raise _conflict()
+    except AdminNotFoundError:
+        raise _not_found()
     except AdminValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
-def _update(db: Session, model, record_id: int, data):
+def _update(db: Session, model, record_id: int, data, actor_id: int | None = None):
     try:
-        return update_record(db, model, record_id, data)
+        return update_record(db, model, record_id, data, actor_id=actor_id)
     except AdminNotFoundError:
         raise _not_found()
     except AdminConflictError:
@@ -542,13 +614,15 @@ def _update(db: Session, model, record_id: int, data):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
-def _delete(db: Session, model, record_id: int):
+def _delete(db: Session, model, record_id: int, actor_id: int | None = None):
     try:
-        delete_record(db, model, record_id)
+        delete_record(db, model, record_id, actor_id=actor_id)
     except AdminNotFoundError:
         raise _not_found()
     except AdminConflictError:
         raise _conflict()
+    except AdminValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -565,6 +639,8 @@ def _trip_action(action, db: Session, trip_id: int):
         )
     except AdminConflictError:
         raise _conflict()
+    except AdminValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
 def _not_found() -> HTTPException:

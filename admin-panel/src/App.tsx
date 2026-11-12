@@ -45,6 +45,7 @@ export default function App() {
   const [sessionError, setSessionError] = useState('');
   const [activePage, setActivePage] = useState<PageKey>('dashboard');
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
+  const [initialEventFilter, setInitialEventFilter] = useState<'pending' | 'all'>('all');
   const [notice, setNotice] = useState<NoticeMessage | null>(null);
 
   useEffect(() => {
@@ -73,8 +74,9 @@ export default function App() {
   }, [user]);
 
   const notify: Notify = (message, tone = 'success') => setNotice({ message, tone });
-  const navigate: Navigate = (page, tripId) => {
+  const navigate: Navigate = (page, tripId, options) => {
     if (tripId !== undefined) setSelectedTripId(tripId);
+    if (page === 'events') setInitialEventFilter(options?.reviewStatus ?? 'all');
     setActivePage(page);
   };
 
@@ -97,7 +99,7 @@ export default function App() {
   if (checkingSession) return <div className="startup-screen"><span className="spinner" />Conferindo sessão administrativa…</div>;
   if (!user) return <LoginPage onLogin={handleLogin} initialError={sessionError} />;
 
-  const screenProps = { notify, navigate, currentUser: user, selectedTripId };
+  const screenProps = { notify, navigate, currentUser: user, selectedTripId, initialEventFilter };
   const screens = {
     dashboard: <DashboardPage {...screenProps} />,
     passengers: <PassengersPage {...screenProps} />,
