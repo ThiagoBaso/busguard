@@ -30,7 +30,10 @@ test('mapa usa a parada aguardada e exibe trajeto atual sem textos removidos', a
   const types = transpile('components/tripMapTypes.ts', {});
   const TripMap = transpile('components/TripMap.tsx', {
     react: React, 'react/jsx-runtime': require('react/jsx-runtime'),
-    'react-native': { StyleSheet: { create: styles => styles } },
+    'react-native': { StyleSheet: { create: styles => styles }, View: 'View', Switch: 'Switch', Pressable: 'Pressable', Platform: { OS: 'web' } },
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) },
+    '@/components/Brand': { AppIcon: 'AppIcon' },
+    '@/constants/theme': { useAppTheme: () => ({ surface: '#fff', border: '#ddd', primary: '#070' }) },
     '@/components/ui': { AppText: 'AppText', Card: 'Card' },
     '@/components/TripMapView': { __esModule: true, default: 'TripMapView' },
     '@/components/tripMapTypes': types,

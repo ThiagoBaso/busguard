@@ -5,7 +5,7 @@ import { ApiError } from '@/services/apiClient';
 import { getDriverTrip, updateVehicleLocation } from '@/services/tripService';
 
 type ShareState = 'idle' | 'requesting' | 'sharing' | 'denied' | 'error';
-type Position = { latitude: number; longitude: number };
+type Position = { latitude: number; longitude: number; heading: number | null };
 type Sharing = { state: ShareState; active: boolean; tripId: number | null; position: Position | null; start: (tripId: number) => Promise<void>; stop: () => void };
 const Context = createContext<Sharing | null>(null);
 
@@ -14,6 +14,8 @@ export function LocationSharingProvider({ children }: { children: React.ReactNod
   const [state, setState] = useState<ShareState>('idle');
   const [activeTrip, setActiveTrip] = useState<number | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
+  const previousPosition = useRef<(Position & { accuracy: number | null }) | null>(null);
+  const lastHeading = useRef<number | null>(null);
   const subscription = useRef<Location.LocationSubscription | null>(null);
   const sending = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -27,6 +29,8 @@ export function LocationSharingProvider({ children }: { children: React.ReactNod
     subscription.current = null;
     sending.current?.abort();
     sending.current = null;
+    previousPosition.current = null;
+    lastHeading.current = null;
     if (mounted.current) { setActiveTrip(null); setPosition(null); setState('idle'); }
   }, []);
 
@@ -47,11 +51,31 @@ export function LocationSharingProvider({ children }: { children: React.ReactNod
       if (permission.status !== 'granted') { setState('denied'); return; }
       if (AppState.currentState === 'background') { stop(); return; }
       const watcher = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 0 },
+        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 5000, distanceInterval: 0 },
         location => {
           if (!mounted.current || current !== generation.current) return;
-          const { latitude, longitude, speed } = location.coords;
-          setPosition({ latitude, longitude });
+          const { latitude, longitude, speed, heading, accuracy } = location.coords;
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return;
+          const previous = previousPosition.current;
+          const moving = speed == null || speed < 0 || speed >= 1;
+          const headingAvailable = moving && heading != null && Number.isFinite(heading) && heading >= 0 && heading < 360;
+          let course = headingAvailable ? heading : lastHeading.current;
+          let updateReference = !previous || headingAvailable;
+          if (!headingAvailable && previous && moving) {
+            const lat1 = previous.latitude * Math.PI / 180;
+            const lat2 = latitude * Math.PI / 180;
+            const dLon = (longitude - previous.longitude) * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2);
+            const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+            const distance = 2 * 6371000 * Math.asin(Math.sqrt(Math.sin((lat2 - lat1) / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2));
+            const accuracyMeters = accuracy != null && Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : 0;
+            const threshold = Math.max(8, accuracyMeters, previous.accuracy ?? 0);
+            if (distance > threshold) { course = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360; updateReference = true; }
+          }
+          const nextPosition = { latitude, longitude, heading: course };
+          if (updateReference) previousPosition.current = { ...nextPosition, accuracy: accuracy != null && Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null };
+          lastHeading.current = course;
+          setPosition(nextPosition);
           if (sending.current) return;
           const operation = new AbortController();
           sending.current = operation;

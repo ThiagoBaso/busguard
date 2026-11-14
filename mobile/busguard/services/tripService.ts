@@ -69,6 +69,18 @@ export type BoardingResponse = {
   duplicated: boolean;
 };
 export type BoardingSubmission = { eventUuid: string; occurredAt: string };
+export type NfcResolvedStudent = BoardingStudent & { nfcLastEventId: number | null };
+
+export async function resolveNfcStudent(tripId: number, token: string, signal?: AbortSignal) {
+  return apiFetch<NfcResolvedStudent>(`/driver/trips/${tripId}/nfc/resolve`, { method: 'POST', signal, body: JSON.stringify({ token }) });
+}
+
+export async function submitNfcBoarding(tripId: number, token: string, expectedCheckedIn: boolean, submission: BoardingSubmission, expectedEventId: number | null, signal?: AbortSignal) {
+  return apiFetch<BoardingResponse>(`/driver/trips/${tripId}/nfc/events`, {
+    method: 'POST', signal,
+    body: JSON.stringify({ token, expected_checked_in: expectedCheckedIn, expected_event_id: expectedEventId, event_uuid: submission.eventUuid, occurred_at: submission.occurredAt }),
+  });
+}
 
 export async function updateBoardingStatus(
   tripId: number,

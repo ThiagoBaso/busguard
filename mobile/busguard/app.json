@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.busguard.dev",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -35,6 +36,7 @@
         }
       ],
       "expo-secure-store",
+      "react-native-nfc-manager",
       [
         "expo-location",
         {

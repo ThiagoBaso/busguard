@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import './trip-map-markers.css';
 import type { MapViewProps } from './tripMapTypes';
 
-export default function TripMapView({ stops, position, positionLabel, route, routed, nextRoute, nextRouteRouted }: MapViewProps) {
+export default function TripMapView({ stops, position, positionLabel, route, routed, nextRoute, nextRouteRouted, followVehicle, focusRequest, fullScreen = false }: MapViewProps) {
   const element = useRef<HTMLDivElement>(null);
   const [leaflet, setLeaflet] = useState<typeof import('leaflet') | null>(null);
   const [mapError, setMapError] = useState(false);
@@ -51,14 +51,14 @@ export default function TripMapView({ stops, position, positionLabel, route, rou
       leaflet.marker([stop.latitude!, stop.longitude!], { icon, title: `Parada ${stop.sequence}`, zIndexOffset: 100 })
         .bindPopup(popup).addTo(layer);
     });
-    if ((stops.length || position) && fitted.current !== fitSignature) {
+    if (!followVehicle && (stops.length || position) && fitted.current !== fitSignature) {
       fitted.current = fitSignature;
       const points: Leaflet.LatLngTuple[] = stops.map(stop => [stop.latitude!, stop.longitude!]);
       if (position) points.push([position.latitude, position.longitude]);
       const bounds = leaflet.latLngBounds(points);
       map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
     }
-  }, [leaflet, signature, routeSignature, routed, fitSignature]);
+  }, [leaflet, signature, routeSignature, routed, fitSignature, followVehicle]);
   useEffect(() => {
     if (!navigationLayer.current || !leaflet) return;
     navigationLayer.current.clearLayers();
@@ -68,9 +68,15 @@ export default function TripMapView({ stops, position, positionLabel, route, rou
     if (!locationLayer.current || !map.current || !leaflet) return;
     locationLayer.current.clearLayers();
     if (!position) return;
-    const icon = leaflet.divIcon({ className: 'trip-map-location-marker', html: '', iconSize: [44, 44], iconAnchor: [22, 22] });
+    const heading = Number.isFinite(position.heading) ? position.heading : 0;
+    const arrow = `<svg width="44" height="44" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4.5 20.29c-.2.51.34 1.05.85.83L12 18l6.65 3.12c.5.24 1.06-.32.84-.83L12 2Z" transform="rotate(${heading} 12 12)" fill="#075fcd" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" style="filter:drop-shadow(0 1px 2px #0008)"/></svg>`;
+    const icon = leaflet.divIcon({ className: 'trip-map-location-marker', html: arrow, iconSize: [44, 44], iconAnchor: [22, 22] });
     leaflet.marker([position.latitude, position.longitude], { icon, title: positionLabel, zIndexOffset: 1000 }).bindTooltip(positionLabel).addTo(locationLayer.current);
-  }, [leaflet, position?.latitude, position?.longitude, positionLabel, signature]);
+  }, [leaflet, position?.latitude, position?.longitude, position?.heading, positionLabel, signature]);
+  useEffect(() => {
+    if (!map.current || !followVehicle || !position) return;
+    map.current.setView([position.latitude, position.longitude], 19, { animate: true, duration: 0.6 });
+  }, [leaflet, followVehicle, focusRequest, position?.latitude, position?.longitude]);
   if (mapError) return <div role="alert">Não foi possível carregar o mapa. Recarregue a página para tentar novamente.</div>;
-  return <div ref={element} aria-label="Mapa da viagem com localização e paradas" style={{ width: '100%', height: 300, borderRadius: 14, overflow: 'hidden' }} />;
+  return <div ref={element} aria-label="Mapa da viagem com localização e paradas" style={{ width: '100%', height: fullScreen ? '100%' : 300, borderRadius: fullScreen ? 0 : 14, overflow: 'hidden' }} />;
 }

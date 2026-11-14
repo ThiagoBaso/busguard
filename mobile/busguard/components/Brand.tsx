@@ -12,13 +12,20 @@ const symbols = {
   shield: { ios: 'checkmark.shield', android: 'verified_user', web: 'verified_user' },
   clock: { ios: 'clock', android: 'schedule', web: 'schedule' },
   list: { ios: 'list.bullet', android: 'format_list_bulleted', web: 'format_list_bulleted' },
+  checklist: { ios: 'checkmark.square', android: 'checklist', web: 'checklist' },
+  nfc: { ios: 'dot.radiowaves.left.and.right', android: 'contactless', web: 'contactless' },
+  qr: { ios: 'qrcode', android: 'qr_code', web: 'qr_code' },
+  locate: { ios: 'location.fill', android: 'my_location', web: 'my_location' },
+  navigation: { ios: 'location.north.fill', android: 'navigation', web: 'navigation' },
+  expand: { ios: 'arrow.up.left.and.arrow.down.right', android: 'fullscreen', web: 'fullscreen' },
+  back: { ios: 'arrow.left', android: 'arrow_back', web: 'arrow_back' },
   info: { ios: 'info.circle', android: 'info', web: 'info' },
 } as const;
 
 export function AppIcon({ name, size = 22, color }: { name: keyof typeof symbols; size?: number; color?: ColorValue }) {
   const theme = useAppTheme();
   return <SymbolView name={symbols[name]} size={size} tintColor={color ?? theme.text}
-    fallback={<Text style={{ color: color ?? theme.text, fontSize: size }} accessibilityElementsHidden>{name === 'bus' ? '▣' : name === 'arrow' ? '→' : name === 'check' ? '✓' : '◈'}</Text>} />;
+    fallback={<Text style={{ color: color ?? theme.text, fontSize: size }} accessibilityElementsHidden>{name === 'bus' ? '▣' : name === 'arrow' ? '→' : name === 'check' ? '✓' : name === 'navigation' ? '▲' : name === 'expand' ? '⛶' : name === 'back' ? '←' : '◈'}</Text>} />;
 }
 
 export function Brand({ large = false }: { large?: boolean }) {

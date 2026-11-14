@@ -1,7 +1,7 @@
 import type { BoardingStudent, TripMapStop } from '@/services/tripService';
 
-export type MapPoint = { latitude: number; longitude: number };
-export type MapViewProps = { stops: TripMapStop[]; position: MapPoint | null; positionLabel: string; route: MapPoint[]; routed: boolean; nextRoute: MapPoint[]; nextRouteRouted: boolean };
+export type MapPoint = { latitude: number; longitude: number; heading?: number | null };
+export type MapViewProps = { stops: TripMapStop[]; position: MapPoint | null; positionLabel: string; route: MapPoint[]; routed: boolean; nextRoute: MapPoint[]; nextRouteRouted: boolean; followVehicle: boolean; focusRequest: number; fullScreen?: boolean };
 
 export function locatedStops(stops: TripMapStop[]) {
   return stops.filter((stop): stop is TripMapStop & MapPoint =>

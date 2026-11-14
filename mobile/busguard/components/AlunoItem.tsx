@@ -19,36 +19,46 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
   const [expanded, setExpanded] = useState(false);
   const absent = aluno.status === 'absent';
   const initials = aluno.name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-  const actionLabel = aluno.checkedIn ? 'Registrar desembarque' : 'Validar embarque';
+  const actionLabel = aluno.checkedIn ? 'Desembarcar' : 'Embarcar';
   const pendingLabel = aluno.checkedIn ? 'Confirmando desembarque…' : 'Confirmando embarque…';
 
   return (
     <Card style={styles.card}>
       <View style={styles.heading}>
-        <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
-          <AppText style={{ color: theme.primary, fontWeight: '800' }}>{initials || 'A'}</AppText>
+        <View style={styles.profile}>
+          <View style={styles.profileTop}>
+            <View style={[styles.avatar, { backgroundColor: aluno.checkedIn ? theme.primarySoft : '#FFF7DE' }]}>
+              <AppText style={{ color: aluno.checkedIn ? theme.primary : '#8A6500', fontWeight: '800' }}>{initials || 'A'}</AppText>
+            </View>
+            <View style={styles.identity}>
+              <AppText style={styles.name}>{aluno.name}</AppText>
+              <AppText muted style={{ fontSize: 12 }}>{aluno.age} anos{showStop && aluno.stopName ? ` · ${aluno.stopName}` : ''}</AppText>
+              {aluno.checkedIn && aluno.time ? <AppText muted style={styles.eventTime}>Embarque às {aluno.time}</AppText> : null}
+            </View>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${expanded ? 'Ocultar' : 'Mostrar'} endereço e detalhes de ${aluno.name}`}
+            accessibilityState={{ expanded }}
+            onPress={() => setExpanded((value) => !value)}
+            style={({ pressed }) => [styles.detailsToggle, { opacity: pressed ? 0.65 : 1 }]}>
+            <AppText style={{ color: theme.primary, fontWeight: '700', fontSize: 12 }}>{expanded ? 'Ocultar endereço' : 'Ver endereço e parada'}</AppText>
+          </Pressable>
         </View>
-        <View style={styles.identity}>
-          <AppText style={styles.name}>{aluno.name}</AppText>
-          <AppText muted style={{ fontSize: 12 }}>{aluno.age} anos{showStop && aluno.stopName ? ` · ${aluno.stopName}` : ''}</AppText>
+        <View style={styles.actions}>
+          <View style={styles.statusBadge}>
+            <Badge
+              label={aluno.pendingReview ? 'Precisa de revisão' : absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
+              tone={aluno.pendingReview || absent || !aluno.checkedIn ? 'warning' : 'success'}
+            />
+          </View>
+          {readOnly ? null : absent ? null : !aluno.checkedIn ? (
+            <Button label={pending ? 'Confirmando…' : 'Embarcar'} accessibilityLabel={`${pending ? 'Confirmando embarque de' : 'Validar embarque de'} ${aluno.name}`} variant="success" style={styles.actionButton} disabled={disabled || aluno.pendingReview} loading={pending} onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, true); }} />
+          ) : (
+            <Button label={pending ? pendingLabel : actionLabel} accessibilityLabel={`${pending ? pendingLabel : actionLabel} de ${aluno.name}`} variant="secondary" style={styles.actionButton} disabled={disabled || pending || aluno.pendingReview} loading={pending} onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, false); }} />
+          )}
         </View>
       </View>
-      <View style={styles.status}>
-        <Badge
-          label={aluno.pendingReview ? 'Precisa de revisão' : absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
-          tone={aluno.pendingReview || absent ? 'warning' : aluno.checkedIn ? 'success' : 'neutral'}
-        />
-        {aluno.checkedIn && aluno.time ? <AppText muted style={styles.eventTime}>Embarque às {aluno.time}</AppText> : null}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${expanded ? 'Ocultar' : 'Mostrar'} endereço e detalhes de ${aluno.name}`}
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((value) => !value)}
-        style={({ pressed }) => [styles.detailsToggle, { borderColor: theme.border, opacity: pressed ? 0.65 : 1 }]}>
-        <AppText style={{ color: theme.primary, fontWeight: '700' }}>{expanded ? 'Ocultar endereço' : 'Ver endereço e parada'}</AppText>
-        <AppText muted>{expanded ? '−' : '+'}</AppText>
-      </Pressable>
       {expanded ? (
         <View style={[styles.details, { backgroundColor: theme.surfaceAlt }]}>
           <AppText variant="label" muted>Endereço cadastrado</AppText>
@@ -56,28 +66,23 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
           {aluno.stopName ? <AppText muted>Local informado: {aluno.stopName}</AppText> : null}
         </View>
       ) : null}
-      {readOnly ? null : absent ? <AppText muted>Embarque indisponível para aluno marcado como ausente.</AppText> : (
-        <Button
-          label={pending ? pendingLabel : actionLabel}
-          accessibilityLabel={`${pending ? pendingLabel : actionLabel} de ${aluno.name}`}
-          variant={aluno.checkedIn ? 'secondary' : 'primary'}
-          disabled={disabled || pending || aluno.pendingReview}
-          loading={pending}
-          onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, !aluno.checkedIn); }}
-        />
-      )}
+      {absent && !readOnly ? <AppText muted>Embarque indisponível para aluno marcado como ausente.</AppText> : null}
     </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { gap: 9, padding: 13, borderRadius: 16 },
-  heading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  card: { gap: 10, padding: 16, borderRadius: 18 },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  profile: { flex: 1, minWidth: 0, gap: 7 },
+  profileTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  actions: { width: 136, alignItems: 'flex-end', gap: 12 },
+  statusBadge: { alignSelf: 'flex-end' },
+  actionButton: { width: 136, minHeight: 44, paddingVertical: 10, paddingHorizontal: 8, flexWrap: 'nowrap', borderRadius: 10 },
   avatar: { width: 42, height: 42, borderRadius: 21, justifyContent: 'center', alignItems: 'center' },
   identity: { flex: 1, gap: 2, minWidth: 0 },
   name: { fontWeight: '700', fontSize: 15 },
-  status: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingLeft: 53 },
   eventTime: { fontSize: 12 },
-  detailsToggle: { minHeight: 40, paddingVertical: 8, borderTopWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  detailsToggle: { marginLeft: 52, minHeight: 24, justifyContent: 'center' },
   details: { padding: 12, borderRadius: 12, gap: 5 },
 });

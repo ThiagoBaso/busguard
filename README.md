@@ -34,6 +34,8 @@ A API fica em <http://localhost:8000>; a documentação interativa fica em <http
 
 A API executa as migrações aditivas `python -m app.scripts.migrate_access_events_v1` e `python -m app.scripts.migrate_trip_manifests_v2` antes de iniciar. Elas são separadas da carga fictícia e preservam os registros existentes. Para aplicá-las em outro ambiente, faça e valide um backup, configure `DATABASE_URL` para o banco correto e execute os dois comandos no diretório `backend`; **não use `init.sql` como migração de dados reais**. Reiniciar apenas um contêiner de API já criado com `docker compose restart api` não inicia o megamock, mas alterar o comando de inicialização no Compose exige recriar o contêiner da API para que o novo comando entre em vigor; evite iniciar ou recriar o megamock se precisar preservar os dados locais.
 
+A credencial NFC também requer a migração aditiva `python -m app.scripts.migrate_nfc_credentials_v1`. Execute-a no backend antes de usar o recurso em um banco existente. O comando de inicialização atualizado da API no Compose inclui essa migração.
+
 As viagens iniciadas depois da migração guardam seus vínculos de motorista, supervisor e passageiros, incluindo o identificador e a ordem da parada. Durante uma viagem, alterações nos passageiros ou nas paradas da rota ficam bloqueadas até o encerramento. O painel também apresenta o histórico de alterações posteriores em passageiros e paradas, com autor e dados anteriores e posteriores. Viagens e alterações anteriores não recebem históricos presumidos; o manifesto não é uma cópia histórica dos endereços ou das coordenadas.
 
 Para recarregar a fixture manualmente, execute `docker compose down` e depois `docker compose up -d --build`. Sem a opção `-v`, o volume do MySQL permanece; os registros de `app_db` são substituídos na próxima inicialização.
@@ -62,6 +64,16 @@ npm run dev
 ```
 
 O painel abre em <http://localhost:5173> e usa `http://localhost:8000` por padrão. Para outro endereço, copie `.env.example` para `.env` e ajuste `VITE_API_BASE_URL`. O acesso exige uma conta existente com perfil `admin`; o login aceita e-mail ou CPF.
+
+### Tags NFC no Android
+
+O gerenciamento fica em **Passageiros → Editar → Tag NFC**. Gere o código, selecione **Gravar tag**, aproxime uma NTAG216 e depois selecione **Confirmar leitura e ativar** para aproximar a mesma tag novamente. Para substituir uma tag ativa, use outra tag: regravar a antiga apaga seu conteúdo. A credencial antiga permanece ativa até a confirmação da nova. A gravação substitui o conteúdo anterior da tag; cancelar ou interromper o processo deixa o código novo pendente e ele não registra embarques. É possível gerar outro código para recomeçar ou desativar a credencial.
+
+Para gravar pelo painel, abra-o no Chrome para Android com NFC habilitado e use HTTPS ou um `localhost` encaminhado para o computador. Para desenvolvimento local sem HTTPS, habilite a depuração USB no Android, conecte-o ao computador e configure o encaminhamento das portas 5173 e 8000 no Chrome DevTools. Acesse `http://localhost:5173` no telefone; o painel usa `http://localhost:8000` para a API. Outros endereços HTTP da rede não permitem Web NFC. Em produção, use HTTPS para painel e API. Consulte as [instruções do Chrome para encaminhamento de portas](https://developer.chrome.com/docs/devtools/remote-debugging/local-server/).
+
+O aplicativo do motorista precisa de uma nova versão Android com o módulo nativo de NFC; o Expo Go não inclui esse módulo. Com as dependências instaladas e um ambiente Android configurado, gere e instale uma versão de desenvolvimento usando `npx expo run:android`, e configure `EXPO_PUBLIC_API_BASE_URL` para uma API acessível pelo telefone. Na aba **Chamada**, toque em **NFC**, aproxime a tag e confirme o embarque ou desembarque do aluno. A operação exige conexão e uma viagem ativa autorizada. Tags desconhecidas, desativadas, de alunos fora da viagem ou com pendência de revisão não registram o evento.
+
+Cada tag armazena apenas um código aleatório; o servidor guarda um resumo desse código e seu vínculo com o passageiro. Uma tag NDEF comum pode ter seu conteúdo copiado: desative a credencial se ela for perdida ou houver suspeita de cópia. A leitura e a gravação devem ser conferidas em um dispositivo Android com NFC físico antes do uso operacional.
 
 ### Verificações isoladas
 

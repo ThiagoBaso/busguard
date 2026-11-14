@@ -12,6 +12,7 @@ from app.routes import passengers
 from app.routes import responsible
 from app.routes import realtime
 from app.routes import vehicles
+from app.routes import nfc
 from app.routes.auth import router as auth_router
 
 app = FastAPI(title=os.getenv("APP_NAME", "BusGuard API"))
@@ -37,6 +38,7 @@ app.include_router(driver.router)
 app.include_router(passengers.router)
 app.include_router(responsible.router)
 app.include_router(vehicles.router)
+app.include_router(nfc.router)
 
 @app.get("/health")
 def health_check() -> dict[str, str]:

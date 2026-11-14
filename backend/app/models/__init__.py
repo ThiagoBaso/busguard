@@ -16,6 +16,7 @@ from app.models.vehicles import Vehicle
 from app.models.vehicle_locations import VehicleLocation
 from app.models.trip_communications import TripCommunication
 from app.models.trip_manifests import RouteChangeAudit, TripManifest, TripManifestPassenger
+from app.models.nfc_credentials import NfcCredential
 
 __all__ = [
     "AccessEvent",
@@ -39,4 +40,5 @@ __all__ = [
     "TripManifest",
     "TripManifestPassenger",
     "RouteChangeAudit",
+    "NfcCredential",
 ]

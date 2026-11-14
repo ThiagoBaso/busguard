@@ -26,7 +26,7 @@ function harness() {
   class ApiError extends Error { constructor(status) { super('HTTP'); this.status = status; } }
   let getTrip = async () => ({ id: 51 });
   const AppState = { currentState: 'active', addEventListener: (_name, callback) => { listener = callback; return { remove() {} }; } };
-  const Location = { Accuracy: { Balanced: 1 }, requestForegroundPermissionsAsync: async () => ({ status: 'granted' }),
+  const Location = { Accuracy: { BestForNavigation: 6 }, requestForegroundPermissionsAsync: async () => ({ status: 'granted' }),
     watchPositionAsync: async (_options, callback) => { positionCallback = callback; return { remove() { removed++; } }; } };
   const sharing = load('services/locationSharing.tsx', {
     react: React, 'react/jsx-runtime': require('react/jsx-runtime'), 'react-native': { AppState }, 'expo-location': Location,
@@ -59,6 +59,20 @@ test('localização continua enviando ao trocar de Início para Chamada', async 
   assert.equal(h.current.position.latitude, -22.21);
   await h.unmount();
   assert.equal(h.removed, 1);
+});
+
+test('direção acompanha GPS em movimento e não gira com ruído parado', async () => {
+  const h = harness();
+  await h.mount();
+  await act(async () => h.current.start(51));
+  await act(async () => h.emit({ coords: { latitude: -22.21, longitude: -49.94, speed: 5, heading: 90, accuracy: 5 } }));
+  assert.equal(h.current.position.heading, 90);
+  await act(async () => h.emit({ coords: { latitude: -22.21001, longitude: -49.94, speed: 0, heading: 270, accuracy: 5 } }));
+  assert.equal(h.current.position.heading, 90);
+  assert.equal(h.current.position.latitude, -22.21001);
+  await act(async () => h.emit({ coords: { latitude: -22.2098, longitude: -49.94, speed: 5, heading: null, accuracy: 5 } }));
+  assert.ok(h.current.position.heading < 5 || h.current.position.heading > 355);
+  await h.unmount();
 });
 
 test('encerramento da viagem ou saída do primeiro plano para o GPS', async () => {

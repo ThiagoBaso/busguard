@@ -63,7 +63,8 @@ function screenWithInsets(bottom, withTabBar) {
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ bottom }) },
     '@/constants/theme': { useAppTheme: () => ({}) }, '@/components/Brand': { Brand: 'Brand' },
   });
-  return Screen({ title: 'Detalhes', children: 'Último controle', withTabBar }).props.children;
+  const children = Screen({ title: 'Detalhes', children: 'Último controle', withTabBar }).props.children;
+  return Array.isArray(children) ? children[0] : children;
 }
 
 test('detalhes fora das abas reservam inset inferior de 48 px e espaço de toque', () => {

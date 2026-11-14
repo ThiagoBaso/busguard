@@ -4,26 +4,27 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAppTheme } from '@/constants/theme';
 import { Brand } from '@/components/Brand';
 
-export function Screen({ title, subtitle, eyebrow, children, refreshing = false, onRefresh, withTabBar = false }: {
+export function Screen({ title, subtitle, eyebrow, children, footer, refreshing = false, onRefresh, withTabBar = false, hideHeader = false, headerBadgeText = 'TRANSPORTE ESCOLAR' }: {
   title: string; subtitle?: string; eyebrow?: string; children: ReactNode;
-  refreshing?: boolean; onRefresh?: () => void; withTabBar?: boolean;
+  footer?: ReactNode; refreshing?: boolean; onRefresh?: () => void; withTabBar?: boolean; hideHeader?: boolean; headerBadgeText?: string;
 }) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.screen, { backgroundColor: theme.background }]}>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: withTabBar ? 24 : Math.max(24, insets.bottom + 16) }]}
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, { paddingBottom: footer ? 110 : withTabBar ? 24 : Math.max(24, insets.bottom + 16) }]}
         refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} colors={[theme.primary]} /> : undefined}>
         <View style={styles.container}>
-          <View style={[styles.topBar, { borderBottomColor: theme.border }]}><Brand /><View style={[styles.miniBadge, { backgroundColor: theme.primarySoft }]}><Text style={{ color: theme.primary, fontSize: 10, fontWeight: '700' }}>TRANSPORTE ESCOLAR</Text></View></View>
-          <View style={styles.header}>
+          <View style={[styles.topBar, { borderBottomColor: theme.border }]}><Brand /><View style={[styles.miniBadge, { backgroundColor: theme.primarySoft }]}><Text style={{ color: theme.primary, fontSize: 10, fontWeight: '700' }}>{headerBadgeText}</Text></View></View>
+          {!hideHeader ? <View style={styles.header}>
             {eyebrow ? <AppText variant="label" muted>{eyebrow}</AppText> : null}
             <AppText variant="title" accessibilityRole="header">{title}</AppText>
             {subtitle ? <AppText muted>{subtitle}</AppText> : null}
-          </View>
+          </View> : null}
           {children}
         </View>
       </ScrollView>
+      {footer ? <View style={[styles.fixedFooter, { paddingBottom: Math.max(10, insets.bottom), backgroundColor: theme.background }]}>{footer}</View> : null}
     </SafeAreaView>
   );
 }
@@ -41,9 +42,9 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
   return <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }, style]}>{children}</View>;
 }
 
-export function Button({ label, onPress, disabled = false, loading = false, variant = 'primary', accessibilityLabel }: {
+export function Button({ label, onPress, disabled = false, loading = false, variant = 'primary', accessibilityLabel, style }: {
   label: string; onPress: () => void; disabled?: boolean; loading?: boolean; accessibilityLabel?: string;
-  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  variant?: 'primary' | 'secondary' | 'danger' | 'success'; style?: StyleProp<ViewStyle>;
 }) {
   const theme = useAppTheme();
   const background = variant === 'primary' ? theme.accent : variant === 'success' ? theme.primary : variant === 'danger' ? theme.danger : theme.surfaceAlt;
@@ -51,7 +52,7 @@ export function Button({ label, onPress, disabled = false, loading = false, vari
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} accessibilityState={{ disabled: disabled || loading, busy: loading }}
       disabled={disabled || loading} onPress={onPress}
-      style={({ pressed }) => [styles.button, { backgroundColor: background, opacity: disabled || loading ? 0.5 : pressed ? 0.8 : 1 }]}>
+      style={({ pressed }) => [styles.button, { backgroundColor: background, opacity: disabled || loading ? 0.5 : pressed ? 0.8 : 1 }, style]}>
       {loading ? <ActivityIndicator color={foreground} /> : null}
       <Text style={[styles.buttonLabel, { color: foreground }]}>{label}</Text>
     </Pressable>
@@ -77,6 +78,7 @@ export function StatePanel({ title, message, loading = false, onRetry }: { title
 
 const styles = StyleSheet.create({
   screen: { flex: 1 }, scroll: { flexGrow: 1, paddingBottom: 24 },
+  fixedFooter: { paddingTop: 10, paddingHorizontal: 16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#d9e1ed' },
   container: { width: '100%', maxWidth: 640, alignSelf: 'center', paddingHorizontal: 16, gap: 12 },
   topBar: { paddingVertical: 12, borderBottomWidth: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   miniBadge: { borderRadius: 7, padding: 6 },

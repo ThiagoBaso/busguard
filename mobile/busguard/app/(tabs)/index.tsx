@@ -4,6 +4,9 @@ import { randomUUID } from 'expo-crypto';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import AlunoItem from '@/components/AlunoItem';
+import BoardingMethods from '@/components/BoardingMethods';
+import BoardingFooter from '@/components/BoardingFooter';
+import NfcBoardingModal from '@/components/NfcBoardingModal';
 import { AppText, Badge, Button, Card, Notice, Screen, StatePanel } from '@/components/ui';
 import { useAppTheme } from '@/constants/theme';
 import { useTripQuery } from '@/hooks/useTripQuery';
@@ -36,6 +39,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   const router = useRouter();
   const { user } = useSession();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [nfcOpen, setNfcOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; tone: 'error' | 'info' } | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -64,6 +68,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     // Uma gravação continua até a confirmação/timeout, mesmo ao trocar de aba.
     return () => {
       focused.current = false;
+      setNfcOpen(false);
     };
   }, []));
 
@@ -87,8 +92,14 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
         groups.set(key, { stopOrder: student.stopOrder, stopName, students: [student] });
       }
     });
-    return [...groups.entries()].map(([key, group]) => ({ key, ...group }));
-  }, [visibleStudents]);
+    return [...groups.entries()].map(([key, group]) => {
+      const stopStudents = (trip?.students ?? []).filter((student) => (
+        student.stopOrder === group.stopOrder &&
+        normalize(student.stopName.trim() || 'Parada sem identificação') === normalize(group.stopName)
+      ));
+      return { key, ...group, allBoarded: stopStudents.length > 0 && stopStudents.every((student) => student.checkedIn) };
+    });
+  }, [visibleStudents, trip]);
 
   const nextStop = useMemo(() => {
     const nextSequence = nextBoardingStopSequence(trip?.students ?? []);
@@ -171,11 +182,15 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   return (
     <Screen
       withTabBar
-      eyebrow={user?.role === 'supervisor' ? 'PAINEL DO SUPERVISOR' : 'PAINEL DO MOTORISTA'}
+      eyebrow={!listOnly ? (user?.role === 'supervisor' ? 'PAINEL DO SUPERVISOR' : 'PAINEL DO MOTORISTA') : undefined}
       title={listOnly ? 'Chamada dos alunos' : 'Sua viagem'}
-      subtitle={listOnly ? 'Confira a lista e registre cada embarque.' : 'Rota, progresso e próxima parada.'}
+      subtitle={!listOnly ? 'Rota, progresso e próxima parada.' : undefined}
+      hideHeader
+      headerBadgeText={query.updatedAt ? `Última consulta às ${query.updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'TRANSPORTE ESCOLAR'}
+      footer={listOnly ? <BoardingFooter disabled={!trip || pendingId !== null || Boolean(query.error)} onNfc={() => setNfcOpen(true)} /> : undefined}
       refreshing={query.refreshing}
       onRefresh={() => { void refreshList(); }}>
+      {nfcOpen && trip ? <NfcBoardingModal tripId={trip.id} onClose={() => setNfcOpen(false)} onRecorded={() => { setFeedback(null); void query.refresh(); }} /> : null}
       {!trip ? (
         <StatePanel
           title={query.loading ? 'Buscando sua viagem' : query.errorStatus === 404 ? 'Sem viagem ativa' : 'Viagem indisponível'}
@@ -187,41 +202,15 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
         <>
           {query.error ? <Notice tone="error" message={listOnly ? `${failureMessage} A lista abaixo é da última consulta; novos registros estão bloqueados.` : `${failureMessage} Os dados exibidos são da última consulta.`} /> : null}
           {feedback ? <Notice tone={feedback.tone} message={feedback.message} /> : null}
-          <TripSummary
+          {!listOnly ? <TripSummary
             routeName={trip.routeName}
             vehicleLabel={trip.vehicleLabel}
             status={trip.status}
             onDetails={() => router.push('/route')}
             disabled={pendingId !== null || Boolean(query.error)}
             compact={listOnly}
-          />
-          {!listOnly ? <TripMap tripId={trip.id} position={sharing.tripId === trip.id ? sharing.position : null} nextStopSequence={nextStop?.stopOrder ?? null} /> : null}
-          {!listOnly && trip.status.toLocaleLowerCase() === 'em andamento' ? (
-            <Card style={styles.locationCard}>
-              <View style={styles.locationHeading}>
-                <View style={styles.progressTitleGroup}>
-                  <AppText variant="label" muted>RASTREAMENTO DO VEÍCULO</AppText>
-                  <AppText style={styles.progressTitle}>Compartilhe sua localização</AppText>
-                </View>
-                <Badge
-                  label={sharing.state === 'sharing' ? 'ATIVO' : sharing.state === 'requesting' ? 'AGUARDE' : sharing.state === 'error' ? 'ERRO' : 'PAUSADO'}
-                  tone={sharing.state === 'sharing' ? 'success' : 'warning'}
-                />
-              </View>
-              <AppText muted>
-                Com sua autorização, o BusGuard compartilha a localização durante a viagem e a envia a um serviço de rotas externo para calcular o caminho até a próxima parada. Ao sair do app, o compartilhamento para.
-              </AppText>
-              {sharing.state === 'denied' ? <Notice tone="error" message="A permissão de localização foi negada. Ative-a nas configurações do dispositivo para compartilhar o GPS." /> : null}
-              {sharing.state === 'error' ? <Notice tone="error" message="Não foi possível enviar a localização. Verifique a conexão e tente novamente." /> : null}
-              <Button
-                label={sharing.state === 'requesting' ? 'Solicitando permissão…' : sharing.active ? 'Parar compartilhamento' : 'Compartilhar localização'}
-                variant="secondary"
-                loading={sharing.state === 'requesting'}
-                disabled={sharing.state === 'requesting'}
-                onPress={() => sharing.active ? sharing.stop() : void sharing.start(trip.id)}
-              />
-            </Card>
-          ) : null}
+          /> : null}
+          {!listOnly ? <TripMap tripId={trip.id} position={sharing.tripId === trip.id ? sharing.position : null} nextStopSequence={nextStop?.stopOrder ?? null} sharing={sharing.active} onSharingChange={(enabled) => enabled ? void sharing.start(trip.id) : sharing.stop()} /> : null}
           <Card style={styles.progressCard}>
             <View style={styles.progressHeading}>
               <View style={styles.progressTitleGroup}>
@@ -276,23 +265,19 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                     : 'Nenhum aluno está vinculado a esta rota.'}
               </AppText>
               {nextStudent && !nextStudent.pendingReview ? (
-                <Button
-                  label={pendingId === nextStudent.id ? `Confirmando embarque de ${nextStudent.name}…` : `Validar embarque de ${nextStudent.name}`}
+                <BoardingMethods
+                  callLabel={pendingId === nextStudent.id ? 'Aguarde…' : 'Chamada'}
                   accessibilityLabel={`${pendingId === nextStudent.id ? 'Confirmando embarque de' : 'Validar embarque de'} ${nextStudent.name}`}
-                  variant="success"
                   loading={pendingId === nextStudent.id}
                   disabled={pendingId !== null || Boolean(query.error) || feedback?.tone === 'error'}
-                  onPress={() => { void handleBoardingChange(nextStudent, true); }}
+                  onCall={() => { void handleBoardingChange(nextStudent, true); }}
+                  onNfc={() => setNfcOpen(true)}
                 />
               ) : null}
               <Button label="Ver chamada completa" variant="secondary" onPress={() => router.push('/(tabs)/students')} />
             </Card>
           ) : null}
           {listOnly ? <>
-          <View style={styles.sectionHeading}>
-            <AppText variant="label" muted>ALUNOS POR PARADA</AppText>
-            <AppText muted>{visibleStudents.length} {visibleStudents.length === 1 ? 'aluno' : 'alunos'}</AppText>
-          </View>
           <TextInput
             accessibilityLabel="Buscar aluno pelo nome"
             placeholder="Buscar aluno pelo nome"
@@ -311,16 +296,16 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                 accessibilityRole="button"
                 accessibilityState={{ selected: filter === item.value }}
                 onPress={() => setFilter(item.value)}
-                style={({ pressed }) => [styles.filter, { backgroundColor: filter === item.value ? theme.primarySoft : theme.surface, borderColor: filter === item.value ? theme.primary : theme.border, opacity: pressed ? 0.7 : 1 }]}>
-                <AppText style={{ color: filter === item.value ? theme.primary : theme.muted, fontWeight: '700' }}>{item.label}</AppText>
+                style={({ pressed }) => [styles.filter, item.value === 'boarded' && styles.filterBoarded, { backgroundColor: filter === item.value ? theme.primarySoft : theme.surface, borderColor: filter === item.value ? theme.primary : theme.border, opacity: pressed ? 0.7 : 1 }]}>
+                <AppText style={[styles.filterLabel, { color: filter === item.value ? theme.primary : theme.muted }]}>{item.label}</AppText>
               </Pressable>
             ))}
           </View>
           {studentsByStop.map((group) => (
             <View key={group.key} style={styles.stopGroup}>
               <View style={[styles.stopHeading, { borderBottomColor: theme.border }]}>
-                <View style={[styles.stopNumber, { backgroundColor: theme.primarySoft }]}>
-                  <AppText style={{ color: theme.primary, fontWeight: '800' }}>{group.stopOrder > 0 ? String(group.stopOrder).padStart(2, '0') : '•'}</AppText>
+                <View style={[styles.stopNumber, { backgroundColor: group.allBoarded ? theme.primarySoft : '#FFF7DE' }]}>
+                  <AppText style={{ color: group.allBoarded ? theme.primary : '#8A6500', fontWeight: '800' }}>{group.stopOrder > 0 ? String(group.stopOrder).padStart(2, '0') : '•'}</AppText>
                 </View>
                 <View style={styles.stopIdentity}>
                   <AppText variant="label" muted>{group.stopOrder > 0 ? `PARADA ${String(group.stopOrder).padStart(2, '0')}` : 'PARADA'}</AppText>
@@ -352,8 +337,6 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
             ) : null}
           </> : null}
           </> : null}
-          <Button label={query.refreshing ? (listOnly ? 'Atualizando chamada…' : 'Atualizando viagem…') : listOnly ? 'Atualizar lista' : 'Atualizar viagem'} variant="secondary" loading={query.refreshing} disabled={pendingId !== null} onPress={() => { void refreshList(); }} />
-          <AppText muted>{query.updatedAt ? `Última consulta às ${query.updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : ''}</AppText>
         </>
       )}
     </Screen>
@@ -377,11 +360,13 @@ const styles = StyleSheet.create({
   sectionHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 },
   nextStopCard: { borderRadius: 18, gap: 11, padding: 17 },
   nextStopHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  stopGroup: { gap: 8 },
+  stopGroup: { gap: 8, marginBottom: 14 },
   stopHeading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 8, borderBottomWidth: 1 },
   stopNumber: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   stopIdentity: { flex: 1, gap: 2 },
   search: { minHeight: 50, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16 },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filter: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, borderWidth: 1 },
+  filter: { minHeight: 44, flexShrink: 0, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, borderWidth: 1 },
+  filterBoarded: { minWidth: 116, width: 116, alignItems: 'center' },
+  filterLabel: { flexShrink: 0, textAlign: 'center' },
 });
