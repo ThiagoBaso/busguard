@@ -11,9 +11,10 @@ type BoardingMethodsProps = {
   callLabel?: string;
   accessibilityLabel?: string;
   onNfc?: () => void;
+  onQr?: () => void;
 };
 
-export default function BoardingMethods({ onCall, onNfc, disabled = false, loading = false, callLabel = 'Chamada', accessibilityLabel }: BoardingMethodsProps) {
+export default function BoardingMethods({ onCall, onNfc, onQr, disabled = false, loading = false, callLabel = 'Chamada', accessibilityLabel }: BoardingMethodsProps) {
   const theme = useAppTheme();
   const backgroundColor = theme.primary;
   const foregroundColor = theme.dark ? '#10271f' : '#ffffff';
@@ -34,10 +35,10 @@ export default function BoardingMethods({ onCall, onNfc, disabled = false, loadi
         <AppIcon name="nfc" size={23} color={foregroundColor} />
         <AppText style={[styles.label, { color: foregroundColor }]}>NFC</AppText>
       </Pressable>
-      <View accessibilityRole="button" accessibilityLabel="QR, disponível futuramente" accessibilityState={{ disabled: true }} style={[styles.method, styles.futureMethod, { backgroundColor, opacity: 0.5 }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Ler QR Code" accessibilityState={{ disabled: !onQr || disabled || loading }} disabled={!onQr || disabled || loading} onPress={onQr} style={({ pressed }) => [styles.method, styles.futureMethod, { backgroundColor, opacity: !onQr || disabled || loading ? 0.5 : pressed ? 0.8 : 1 }]}>
         <AppIcon name="qr" size={23} color={foregroundColor} />
         <AppText style={[styles.label, { color: foregroundColor }]}>QR</AppText>
-      </View>
+      </Pressable>
     </View>
   );
 }

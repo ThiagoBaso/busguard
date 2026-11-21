@@ -68,7 +68,17 @@ class ResponsibleTripResponse(BaseModel):
     childStatus: str
     lastUpdate: str
     lastEventAt: str | None = None
+    boardedAt: str | None = None
+    alightedAt: str | None = None
+    location: dict | None = None
     lastCommunication: str | None = None
     communicationStatus: str = 'unknown'
+    driverUserId: int
     driverName: str
     vehicleLabel: str
+
+
+class ResponsiblePassengerResponse(BaseModel):
+    id: int
+    name: str
+    trip: ResponsibleTripResponse | None

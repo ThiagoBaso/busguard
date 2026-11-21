@@ -50,8 +50,12 @@ export type ResponsibleTrip = {
   childStatus: string;
   lastUpdate: string;
   lastEventAt: string | null;
+  boardedAt: string | null;
+  alightedAt: string | null;
+  location: { latitude: number; longitude: number; recordedAt: string } | null;
   lastCommunication: string | null;
   communicationStatus: 'recent' | 'stale' | 'unknown';
+  driverUserId: number;
   driverName: string;
   vehicleLabel: string;
 };
@@ -60,8 +64,14 @@ export async function getDriverTrip(signal?: AbortSignal): Promise<DriverTrip> {
   return apiFetch<DriverTrip>('/driver/trips/current', { signal });
 }
 
-export async function getResponsibleTrip(signal?: AbortSignal): Promise<ResponsibleTrip> {
-  return apiFetch<ResponsibleTrip>('/responsible/children/current-trip', { signal });
+export type ResponsiblePassenger = { id: number; name: string; trip: ResponsibleTrip | null };
+
+export async function getResponsiblePassengers(signal?: AbortSignal): Promise<ResponsiblePassenger[]> {
+  return apiFetch<ResponsiblePassenger[]>('/responsible/children', { signal });
+}
+
+export async function getResponsibleTrip(signal?: AbortSignal, passengerId?: number): Promise<ResponsibleTrip> {
+  return apiFetch<ResponsibleTrip>(`/responsible/children/current-trip${passengerId ? `?passenger_id=${passengerId}` : ''}`, { signal });
 }
 
 export type BoardingResponse = {
@@ -70,6 +80,18 @@ export type BoardingResponse = {
 };
 export type BoardingSubmission = { eventUuid: string; occurredAt: string };
 export type NfcResolvedStudent = BoardingStudent & { nfcLastEventId: number | null };
+export type QrResolvedStudent = BoardingStudent & { qrLastEventId: number | null };
+
+export async function resolveQrStudent(tripId: number, token: string, signal?: AbortSignal) {
+  return apiFetch<QrResolvedStudent>(`/driver/trips/${tripId}/qr/resolve`, { method: 'POST', signal, body: JSON.stringify({ token }) });
+}
+
+export async function submitQrBoarding(tripId: number, token: string, expectedCheckedIn: boolean, submission: BoardingSubmission, expectedEventId: number | null, signal?: AbortSignal) {
+  return apiFetch<BoardingResponse>(`/driver/trips/${tripId}/qr/events`, {
+    method: 'POST', signal,
+    body: JSON.stringify({ token, expected_checked_in: expectedCheckedIn, expected_event_id: expectedEventId, event_uuid: submission.eventUuid, occurred_at: submission.occurredAt }),
+  });
+}
 
 export async function resolveNfcStudent(tripId: number, token: string, signal?: AbortSignal) {
   return apiFetch<NfcResolvedStudent>(`/driver/trips/${tripId}/nfc/resolve`, { method: 'POST', signal, body: JSON.stringify({ token }) });

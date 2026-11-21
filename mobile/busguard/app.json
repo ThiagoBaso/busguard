@@ -36,6 +36,7 @@
         }
       ],
       "expo-secure-store",
+      ["expo-camera", { "recordAudioAndroid": false }],
       "react-native-nfc-manager",
       [
         "expo-location",

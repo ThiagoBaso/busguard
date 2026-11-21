@@ -16,10 +16,11 @@ from app.models.passengers_responsibles import PassengerResponsible
 from app.models.responsibles import Responsible
 from app.models.route_passengers import RoutePassenger
 from app.models.trip_communications import TripCommunication
+from app.models.vehicle_locations import VehicleLocation
 from app.schemas.access_events import TripEventCreate
 from app.services.boarding_events import EventConflictError, EventReviewError, create_trip_event, review_event
 from app.services.communication_status import describe_communication
-from app.services.trip_service import CurrentTripNotFoundError, _latest_event_for_passenger, get_responsible_current_trip, record_driver_communication
+from app.services.trip_service import CurrentTripNotFoundError, _latest_event_for_passenger, get_responsible_current_trip, get_responsible_passengers, record_driver_communication
 import test_mobile_authorization as fixtures
 
 
@@ -101,11 +102,60 @@ class BoardingEventTests(unittest.TestCase):
         before = get_responsible_current_trip(self.db, 3)
         self.assertEqual(before['childStatus'], 'Precisa de confirmação')
         self.assertIsNotNone(before['lastEventAt'])
+        self.assertIsNone(before['location'])
         self.assertEqual(before['communicationStatus'], 'unknown')
         record_driver_communication(self.db, 1)
         after = get_responsible_current_trip(self.db, 3)
         self.assertEqual(after['communicationStatus'], 'recent')
         self.assertTrue(after['lastCommunication'].endswith('Z'))
+
+    def test_responsible_tracking_requires_confirmed_boarding_and_stops_after_exit(self):
+        for model in (Passenger, Responsible, PassengerResponsible):
+            model.__table__.create(self.engine)
+        self.db.execute(text("UPDATE trips SET status='completed' WHERE id=52"))
+        self.db.add(Address(id=1, cep='17500000', rua='Rua A', numero='1', bairro='Centro', cidade='Marília', estado='SP'))
+        self.db.add(Passenger(id=101, name='Aluno fictício', birth_date=date(2017, 1, 1), rg='123', cpf='123', addresses_id=1))
+        self.db.add(Responsible(id=1, users_id=3, addresses_id=1))
+        self.db.add(PassengerResponsible(id=1, passengers_id=101, responsible_id=1))
+        self.db.add(VehicleLocation(trip_id=51, latitude=-23.5, longitude=-46.6, source='gps'))
+        self.db.commit()
+        self.assertIsNone(get_responsible_current_trip(self.db, 3)['location'])
+        boarded, _ = create_trip_event(self.db, 51, self.payload(), 1, 'driver')
+        on_board = get_responsible_current_trip(self.db, 3)
+        self.assertIsNotNone(on_board['boardedAt'])
+        self.assertIsNone(on_board['alightedAt'])
+        self.assertEqual(on_board['location']['latitude'], -23.5)
+        exited, _ = create_trip_event(self.db, 51, self.payload('exit', boarded.occurred_at.replace(tzinfo=timezone.utc) + timedelta(seconds=1)), 1, 'driver')
+        self.assertEqual(exited.review_status, 'accepted')
+        after = get_responsible_current_trip(self.db, 3)
+        self.assertIsNotNone(after['boardedAt'])
+        self.assertIsNotNone(after['alightedAt'])
+        self.assertIsNone(after['location'])
+
+    def test_responsible_lists_each_linked_passenger_and_only_accesses_own_trip(self):
+        for model in (Passenger, Responsible, PassengerResponsible):
+            model.__table__.create(self.engine)
+        self.db.execute(text("UPDATE trips SET status='completed' WHERE id=52"))
+        self.db.add(Address(id=1, cep='17500000', rua='Rua A', numero='1', bairro='Centro', cidade='Marília', estado='SP'))
+        self.db.add_all([
+            Passenger(id=101, name='Aluno A', birth_date=date(2017, 1, 1), rg='123', cpf='123', addresses_id=1),
+            Passenger(id=102, name='Aluno B', birth_date=date(2017, 1, 1), rg='124', cpf='124', addresses_id=1),
+            Passenger(id=103, name='Aluno C', birth_date=date(2017, 1, 1), rg='125', cpf='125', addresses_id=1),
+            Responsible(id=1, users_id=3, addresses_id=1),
+            PassengerResponsible(id=1, passengers_id=101, responsible_id=1),
+            PassengerResponsible(id=2, passengers_id=102, responsible_id=1),
+        ])
+        self.db.commit()
+        passengers = get_responsible_passengers(self.db, 3)
+        self.assertEqual([p['id'] for p in passengers], [101, 102])
+        self.assertEqual(passengers[0]['trip']['childName'], 'Aluno A')
+        self.assertEqual(passengers[0]['trip']['driverUserId'], 1)
+        self.assertIsNone(passengers[1]['trip'])
+        with self.assertRaises(CurrentTripNotFoundError):
+            get_responsible_current_trip(self.db, 3, 103)
+        self.db.add(RoutePassenger(route_id=31, passenger_id=102, active=True))
+        self.db.commit()
+        self.assertEqual(get_responsible_current_trip(self.db, 3, 102)['childName'], 'Aluno B')
 
     def test_http_authorization_and_review_flow(self):
         from app.database import get_db

@@ -14,6 +14,8 @@ const symbols = {
   list: { ios: 'list.bullet', android: 'format_list_bulleted', web: 'format_list_bulleted' },
   checklist: { ios: 'checkmark.square', android: 'checklist', web: 'checklist' },
   nfc: { ios: 'dot.radiowaves.left.and.right', android: 'contactless', web: 'contactless' },
+  message: { ios: 'bubble.left.and.bubble.right', android: 'chat', web: 'chat' },
+  send: { ios: 'paperplane.fill', android: 'send', web: 'send' },
   qr: { ios: 'qrcode', android: 'qr_code', web: 'qr_code' },
   locate: { ios: 'location.fill', android: 'my_location', web: 'my_location' },
   navigation: { ios: 'location.north.fill', android: 'navigation', web: 'navigation' },

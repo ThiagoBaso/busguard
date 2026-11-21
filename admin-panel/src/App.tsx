@@ -13,6 +13,7 @@ import { TripsPage } from './pages/TripsPage';
 import { EventsPage } from './pages/EventsPage';
 import { AdministratorsPage } from './pages/AdministratorsPage';
 import { GpsPage } from './pages/GpsPage';
+import { MessagesPage } from './pages/MessagesPage';
 import { startRealtime } from './realtime';
 import { useApiData } from './hooks';
 
@@ -26,6 +27,7 @@ const navigation: { section: string; items: { key: PageKey; label: string }[] }[
     { key: 'trips', label: 'Viagens' },
   ] },
   { section: 'OPERAÇÃO', items: [
+    { key: 'messages', label: 'Mensagens' },
     { key: 'events', label: 'Embarques e Desembarques' },
     { key: 'gps', label: 'Rastreamento GPS' },
   ] },
@@ -35,7 +37,7 @@ const navigation: { section: string; items: { key: PageKey; label: string }[] }[
 const pageNames: Record<PageKey, string> = {
   dashboard: 'Dashboard', passengers: 'Passageiros', drivers: 'Motoristas', vehicles: 'Veículos',
   routes: 'Rotas e Paradas', trips: 'Viagens', events: 'Embarques e Desembarques',
-  administrators: 'Administradores', gps: 'Rastreamento GPS',
+  administrators: 'Administradores', gps: 'Rastreamento GPS', messages: 'Mensagens',
 };
 const loadShellUsers = () => apiFetch<User[]>('/admin/users?limit=500');
 
@@ -110,6 +112,7 @@ export default function App() {
     events: <EventsPage {...screenProps} />,
     administrators: <AdministratorsPage {...screenProps} />,
     gps: <GpsPage {...screenProps} />,
+    messages: <MessagesPage {...screenProps} />,
   } satisfies Record<PageKey, ReactNode>;
 
   return (
@@ -171,6 +174,18 @@ function AdminShell({ page, pageName, currentUserId, onNavigate, onLogout, child
   const { data: users } = useApiData(loadShellUsers, ['users']);
   const adminName = users?.find((item) => item.id === currentUserId && item.role === 'admin')?.name || 'Administrador';
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  useEffect(() => {
+    let live = true;
+    const controller = new AbortController();
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      void apiFetch<{ unread: number }[]>('/chat/conversations', { signal: controller.signal }).then(items => { if (live) setUnreadMessages(items.reduce((total, item) => total + item.unread, 0)); }).catch(() => {});
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { live = false; controller.abort(); window.clearInterval(timer); };
+  }, [currentUserId]);
 
   return (
     <div className="admin-layout">
@@ -191,7 +206,7 @@ function AdminShell({ page, pageName, currentUserId, onNavigate, onLogout, child
                   key={item.key}
                   onClick={() => { onNavigate(item.key); setSidebarOpen(false); }}
                 >
-                  <span className="nav-icon" aria-hidden="true"><NavIcon name={item.key} /></span><span>{item.label}</span>
+                  <span className="nav-icon" aria-hidden="true"><NavIcon name={item.key} /></span><span>{item.label}{item.key === 'messages' && unreadMessages ? ` (${unreadMessages})` : ''}</span>
                 </button>
               ))}
             </div>
@@ -225,6 +240,7 @@ function NavIcon({ name }: { name: PageKey }) {
     trips: <><rect x="5" y="4.5" width="14" height="17" rx="2" /><path d="M9 4.5v-2h6v2M8.5 10h7m-7 4h7m-7 4h4" /></>,
     events: <><rect x="4" y="3.5" width="16" height="17" rx="2" /><path d="m8 10 2 2 4-4m-6 8h8" /></>,
     gps: <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3" /><path d="M12 1.8v3m0 14.4v3m10.2-10.2h-3M4.8 12h-3" /></>,
+    messages: <><path d="M4 5h16v12H9l-5 3V5z" /><path d="M8 9h8M8 13h6" /></>,
     administrators: <><path d="M12 21s7-3.5 7-9V5l-7-3-7 3v7c0 5.5 7 9 7 9z" /><path d="M9.2 11.8 11 13.6l3.8-4" /></>,
   };
 

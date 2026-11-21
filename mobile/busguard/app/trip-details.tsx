@@ -1,5 +1,7 @@
 ﻿import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
+import { useCallback } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 
 import { AppText, Badge, Button, Card, Notice, Screen, StatePanel } from '@/components/ui';
 import { useAppTheme } from '@/constants/theme';
@@ -9,10 +11,14 @@ import { getResponsibleTrip } from '@/services/tripService';
 
 export default function TripDetailsScreen() {
   const router = useRouter();
+  const { passengerId } = useLocalSearchParams<{ passengerId?: string }>();
+  const parsedId = Number(passengerId);
+  const selectedPassenger = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : undefined;
   const theme = useAppTheme();
   const { status, user } = useSession();
   const allowed = status === 'signedIn' && user?.role === 'responsible';
-  const query = useTripQuery(getResponsibleTrip, allowed);
+  const loader = useCallback((signal?: AbortSignal) => getResponsibleTrip(signal, selectedPassenger), [selectedPassenger]);
+  const query = useTripQuery(loader, allowed);
   const trip = query.data;
   const consultationTime = query.updatedAt?.toLocaleTimeString('pt-BR', {
     hour: '2-digit', minute: '2-digit', second: '2-digit',

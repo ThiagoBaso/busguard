@@ -91,4 +91,4 @@ export interface NoticeMessage { tone: 'success' | 'error' | 'info'; message: st
 
 export type PageKey =
   | 'dashboard' | 'passengers' | 'drivers' | 'vehicles' | 'routes'
-  | 'trips' | 'events' | 'administrators' | 'gps';
+  | 'trips' | 'events' | 'administrators' | 'gps' | 'messages';

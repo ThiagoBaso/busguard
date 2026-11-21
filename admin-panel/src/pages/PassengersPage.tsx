@@ -3,6 +3,7 @@ import { apiFetch } from '../api';
 import { Button, EmptyState, Field, LoadingState, Modal, PageTitle, Pagination, Panel, Pill, SearchBox, SelectInput, TableFrame, TextInput, formatAddress, formatDate } from '../components';
 import { CoordinatesEditor, parseCoordinates } from '../CoordinatesEditor';
 import { NfcManager } from '../NfcManager';
+import { QrManager } from '../QrManager';
 import { digits, includesText, useApiData, usePagination } from '../hooks';
 import type { Address, Passenger, PassengerResponsible, Responsible, User } from '../types';
 import type { ScreenProps } from '../pageTypes';
@@ -194,6 +195,7 @@ export function PassengersPage({ notify }: ScreenProps) {
           <Field label="Endereço" className="field-span-two"><SelectInput value={form.addresses_id} onChange={(event) => setForm({ ...form, addresses_id: event.target.value })} required><option value="">Selecione um endereço</option>{addresses.map((address) => <option value={address.id} key={address.id}>{formatAddress(address)}</option>)}</SelectInput><Button type="button" variant="plain" onClick={() => setAddressOpen(true)}>＋ Cadastrar endereço</Button></Field>
         </div>
         {editing ? <NfcManager passengerId={editing.id} /> : null}
+        {editing ? <QrManager passengerId={editing.id} /> : null}
       </Modal> : null}
 
       {addressOpen ? <Modal title="Cadastrar endereço" eyebrow="NOVO ENDEREÇO" onClose={() => setAddressOpen(false)} onSubmit={(event) => void saveAddress(event)} submitLabel="Salvar endereço" busy={busy} wide>

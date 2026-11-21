@@ -67,6 +67,12 @@ O painel abre em <http://localhost:5173> e usa `http://localhost:8000` por padr�
 
 ### Tags NFC no Android
 
+#### Reconectar o celular por USB no Windows
+
+Com o celular desbloqueado, a depuração USB ativada e o cabo conectado, execute **Reconectar Android.cmd** na pasta do projeto. Se o Android solicitar autorização de depuração, aceite no celular e execute o atalho novamente. Ele encaminha as portas do painel (5173), da API (8000) e do servidor do aplicativo (8082), verifica o painel e a API, inicia o servidor de desenvolvimento do app se necessário e abre o aplicativo conectado a esse servidor. Acesse `http://localhost:5173` no Chrome do celular para usar o painel. Repita o atalho sempre que desconectar o cabo ou reiniciar o celular.
+
+O atalho exige Android SDK Platform Tools (ADB), Node.js, as dependências do aplicativo e a versão de desenvolvimento do BusGuard já instalada. Se o ADB não for encontrado, instale as [Platform Tools oficiais](https://developer.android.com/tools/releases/platform-tools) e adicione a pasta ao PATH. O atalho verifica a API e o painel, mas não inicia nem recria os contêineres Docker. O servidor de desenvolvimento iniciado por ele usa a configuração de teste com o mapa nativo desativado, necessária para a versão instalada sem chave do Google Maps.
+
 O gerenciamento fica em **Passageiros → Editar → Tag NFC**. Gere o código, selecione **Gravar tag**, aproxime uma NTAG216 e depois selecione **Confirmar leitura e ativar** para aproximar a mesma tag novamente. Para substituir uma tag ativa, use outra tag: regravar a antiga apaga seu conteúdo. A credencial antiga permanece ativa até a confirmação da nova. A gravação substitui o conteúdo anterior da tag; cancelar ou interromper o processo deixa o código novo pendente e ele não registra embarques. É possível gerar outro código para recomeçar ou desativar a credencial.
 
 Para gravar pelo painel, abra-o no Chrome para Android com NFC habilitado e use HTTPS ou um `localhost` encaminhado para o computador. Para desenvolvimento local sem HTTPS, habilite a depuração USB no Android, conecte-o ao computador e configure o encaminhamento das portas 5173 e 8000 no Chrome DevTools. Acesse `http://localhost:5173` no telefone; o painel usa `http://localhost:8000` para a API. Outros endereços HTTP da rede não permitem Web NFC. Em produção, use HTTPS para painel e API. Consulte as [instruções do Chrome para encaminhamento de portas](https://developer.chrome.com/docs/devtools/remote-debugging/local-server/).
@@ -74,6 +80,18 @@ Para gravar pelo painel, abra-o no Chrome para Android com NFC habilitado e use 
 O aplicativo do motorista precisa de uma nova versão Android com o módulo nativo de NFC; o Expo Go não inclui esse módulo. Com as dependências instaladas e um ambiente Android configurado, gere e instale uma versão de desenvolvimento usando `npx expo run:android`, e configure `EXPO_PUBLIC_API_BASE_URL` para uma API acessível pelo telefone. Na aba **Chamada**, toque em **NFC**, aproxime a tag e confirme o embarque ou desembarque do aluno. A operação exige conexão e uma viagem ativa autorizada. Tags desconhecidas, desativadas, de alunos fora da viagem ou com pendência de revisão não registram o evento.
 
 Cada tag armazena apenas um código aleatório; o servidor guarda um resumo desse código e seu vínculo com o passageiro. Uma tag NDEF comum pode ter seu conteúdo copiado: desative a credencial se ela for perdida ou houver suspeita de cópia. A leitura e a gravação devem ser conferidas em um dispositivo Android com NFC físico antes do uso operacional.
+
+### QR Code para passageiros
+
+No painel, acesse **Passageiros → Editar → QR Code**, gere o código, baixe ou imprima e confirme a ativação. O código só é exibido durante a emissão; se a cópia for perdida, gere outro. O QR antigo permanece ativo até a confirmação do substituto. Desativar o QR não altera a tag NFC. Para bancos existentes, execute a migração aditiva `python -m app.scripts.migrate_qr_credentials_v1`; não é necessário executar a carga de demonstração.
+
+No aplicativo Android de desenvolvimento, toque em **QR** na chamada, permita a câmera, leia o código e confirme embarque ou desembarque. A leitura exige conexão e viagem ativa autorizada. Como um QR pode ser copiado, desative-o em caso de perda e confira a identidade antes de confirmar. O módulo de câmera exige uma nova compilação Android; o aplicativo instalado anteriormente não o contém.
+
+### Mensagens
+
+Motoristas e responsáveis acessam **Mensagens** no aplicativo; a administração acessa a seção correspondente no painel. Conversas são individuais: a API permite leitura e envio somente aos dois participantes, inclusive quando o usuário é administrador. Os contatos entre motorista e responsável são oferecidos quando há passageiro vinculado a uma rota com viagem programada ou em andamento daquele motorista. A conversa permanece no histórico dos participantes.
+
+O painel e o aplicativo consultam mensagens e quantidades não lidas a cada cinco segundos enquanto estão abertos. A tentativa de envio sem confirmação pode ser repetida com o mesmo identificador, evitando criar duplicatas; no Android ela é mantida no armazenamento seguro do dispositivo. Mensagens com o aplicativo fechado ainda não geram notificações push. Para bancos existentes, execute a migração aditiva `python -m app.scripts.migrate_chat_v1`, sem executar a carga de demonstração.
 
 ### Verificações isoladas
 

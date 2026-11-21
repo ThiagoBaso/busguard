@@ -7,6 +7,7 @@ import AlunoItem from '@/components/AlunoItem';
 import BoardingMethods from '@/components/BoardingMethods';
 import BoardingFooter from '@/components/BoardingFooter';
 import NfcBoardingModal from '@/components/NfcBoardingModal';
+import QrBoardingModal from '@/components/QrBoardingModal';
 import { AppText, Badge, Button, Card, Notice, Screen, StatePanel } from '@/components/ui';
 import { useAppTheme } from '@/constants/theme';
 import { useTripQuery } from '@/hooks/useTripQuery';
@@ -40,6 +41,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   const { user } = useSession();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [nfcOpen, setNfcOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; tone: 'error' | 'info' } | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -69,6 +71,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
     return () => {
       focused.current = false;
       setNfcOpen(false);
+      setQrOpen(false);
     };
   }, []));
 
@@ -187,10 +190,11 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
       subtitle={!listOnly ? 'Rota, progresso e próxima parada.' : undefined}
       hideHeader
       headerBadgeText={query.updatedAt ? `Última consulta às ${query.updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'TRANSPORTE ESCOLAR'}
-      footer={listOnly ? <BoardingFooter disabled={!trip || pendingId !== null || Boolean(query.error)} onNfc={() => setNfcOpen(true)} /> : undefined}
+      footer={listOnly ? <BoardingFooter disabled={!trip || pendingId !== null || Boolean(query.error)} onNfc={() => setNfcOpen(true)} onQr={() => setQrOpen(true)} /> : undefined}
       refreshing={query.refreshing}
       onRefresh={() => { void refreshList(); }}>
       {nfcOpen && trip ? <NfcBoardingModal tripId={trip.id} onClose={() => setNfcOpen(false)} onRecorded={() => { setFeedback(null); void query.refresh(); }} /> : null}
+      {qrOpen && trip ? <QrBoardingModal tripId={trip.id} onClose={() => setQrOpen(false)} onRecorded={() => { setFeedback(null); void query.refresh(); }} /> : null}
       {!trip ? (
         <StatePanel
           title={query.loading ? 'Buscando sua viagem' : query.errorStatus === 404 ? 'Sem viagem ativa' : 'Viagem indisponível'}
@@ -272,6 +276,7 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                   disabled={pendingId !== null || Boolean(query.error) || feedback?.tone === 'error'}
                   onCall={() => { void handleBoardingChange(nextStudent, true); }}
                   onNfc={() => setNfcOpen(true)}
+                  onQr={() => setQrOpen(true)}
                 />
               ) : null}
               <Button label="Ver chamada completa" variant="secondary" onPress={() => router.push('/(tabs)/students')} />

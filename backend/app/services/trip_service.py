@@ -134,7 +134,7 @@ def get_driver_trip_map(db: Session, trip_id: int, user_id: int, role: str) -> d
     }
 
 
-def get_responsible_current_trip(db: Session, user_id: int) -> dict:
+def get_responsible_current_trip(db: Session, user_id: int, passenger_id: int | None = None) -> dict:
     responsible = (
         db.query(Responsible)
         .filter(Responsible.users_id == user_id)
@@ -144,11 +144,10 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
     if not responsible:
         raise CurrentTripNotFoundError
 
-    passenger_link = (
-        db.query(PassengerResponsible)
-        .filter(PassengerResponsible.responsible_id == responsible.id)
-        .first()
-    )
+    links = db.query(PassengerResponsible).filter(PassengerResponsible.responsible_id == responsible.id)
+    if passenger_id is not None:
+        links = links.filter(PassengerResponsible.passengers_id == passenger_id)
+    passenger_link = links.order_by(PassengerResponsible.passengers_id).first()
 
     if not passenger_link:
         raise CurrentTripNotFoundError
@@ -178,6 +177,19 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
     last_update = latest_event.created_at.strftime("%H:%M") if latest_event else "--:--"
     communication = db.get(TripCommunication, trip.id)
     communication_info = describe_communication(communication.received_at if communication else None)
+    events = (db.query(AccessEvent).filter(
+        AccessEvent.trip_id == trip.id, AccessEvent.vehicle_id == trip.vehicle_id,
+        AccessEvent.passenger_id == passenger.id, AccessEvent.review_status == 'accepted',
+    ).order_by(func.coalesce(AccessEvent.occurred_at, AccessEvent.created_at).desc(), AccessEvent.id.desc()).all())
+    boarding = next((event for event in events if _event_has_action(event, 'entry')), None)
+    alighting = latest_event if _event_has_action(latest_event, 'exit') else None
+    location = None
+    if not pending and _event_has_action(latest_event, 'entry'):
+        location = (db.query(VehicleLocation).filter(VehicleLocation.trip_id == trip.id, VehicleLocation.source == 'gps')
+                    .order_by(VehicleLocation.recorded_at.desc(), VehicleLocation.id.desc()).first())
+
+    def event_time(event):
+        return (event.occurred_at or event.created_at).isoformat() + 'Z' if event else None
 
     return {
         "id": trip.id,
@@ -187,11 +199,32 @@ def get_responsible_current_trip(db: Session, user_id: int) -> dict:
         "childStatus": child_status,
         "lastUpdate": last_update,
         "lastEventAt": (latest_event.occurred_at or latest_event.created_at).isoformat() + 'Z' if latest_event else None,
+        "boardedAt": event_time(boarding),
+        "alightedAt": event_time(alighting),
+        "location": None if location is None else {
+            "latitude": location.latitude, "longitude": location.longitude,
+            "recordedAt": location.recorded_at.isoformat() + 'Z',
+        },
         "lastCommunication": communication_info['received_at'],
         "communicationStatus": communication_info['status'],
+        "driverUserId": driver_user.id,
         "driverName": driver_user.name,
         "vehicleLabel": f"{vehicle.model} - {vehicle.plate}",
     }
+
+
+def get_responsible_passengers(db: Session, user_id: int) -> list[dict]:
+    passengers = (db.query(Passenger).join(PassengerResponsible, PassengerResponsible.passengers_id == Passenger.id)
+                  .join(Responsible, Responsible.id == PassengerResponsible.responsible_id)
+                  .filter(Responsible.users_id == user_id).order_by(Passenger.name, Passenger.id).all())
+    result = []
+    for passenger in passengers:
+        try:
+            trip = get_responsible_current_trip(db, user_id, passenger.id)
+        except CurrentTripNotFoundError:
+            trip = None
+        result.append({"id": passenger.id, "name": passenger.name, "trip": trip})
+    return result
 
 
 def set_boarding_status(

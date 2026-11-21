@@ -110,13 +110,16 @@ for (const mode of ['light', 'dark']) {
     const Tabs = Object.assign(() => {}, { Protected: 'Protected', Screen: 'Tab' });
     const theme = visualTheme(mode);
     const { default: TabLayout } = load('app/(tabs)/_layout.tsx', {
+      react: { useEffect: () => {}, useState: value => [value, () => {}] },
       'react/jsx-runtime': { jsx: element, jsxs: element },
+      'react-native': { AppState: { currentState: 'active' } },
       'expo-router': { Tabs },
       '@/components/Brand': { AppIcon: 'Icon' },
       '@/constants/theme': { useAppTheme: () => theme },
       '@/services/session': { useSession: () => ({ user: { role: 'driver' } }) },
       '@/services/locationSharing': { LocationSharingProvider: 'LocationSharingProvider' },
       '@/services/tripCommunication': { TripCommunicationReporter: 'TripCommunicationReporter' },
+      '@/services/chat': { chatConversations: async () => [] },
     });
     const tree = TabLayout().props.children.find(child => child.type === Tabs);
     const screens = tree.props.children.flatMap(child => child.type === 'Protected'
