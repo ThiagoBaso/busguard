@@ -10,6 +10,9 @@ class BoardingStudent(BaseModel):
     stopOrder: int
     stopName: str
     address: str
+    dropoffOrder: int | None = None
+    dropoffName: str | None = None
+    dropoffAddress: str | None = None
     checkedIn: bool
     boarded: bool = False
     pendingReview: bool = False
@@ -33,6 +36,7 @@ class DriverMapStop(BaseModel):
     latitude: float | None
     longitude: float | None
     coordinate_source: str
+    final: bool = False
     completed: bool = False
 
 

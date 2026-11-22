@@ -31,14 +31,14 @@ export interface Vehicle {
   id: number; plate: string; model: string; capacity: number; created_at: string;
 }
 export interface Route {
-  id: number; name: string; description: string | null; shift: RouteShift;
+  id: number; name: string; description: string | null; shift: RouteShift; direction: 'to_school' | 'from_school';
   active: boolean; created_at: string;
 }
 export interface RouteStop {
   id: number; route_id: number; address_id: number; sequence: number; created_at: string;
 }
 export interface RoutePassenger {
-  id: number; route_id: number; passenger_id: number; stop_id: number | null; active: boolean; created_at: string;
+  id: number; route_id: number; passenger_id: number; stop_id: number | null; dropoff_stop_id: number | null; active: boolean; created_at: string;
 }
 export interface RouteGeometry { coordinates: [number, number][]; distance_m: number; duration_s: number }
 export interface NextStopRoute extends RouteGeometry { stop_id: number; stop_sequence: number; routed: boolean }

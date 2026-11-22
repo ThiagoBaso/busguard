@@ -25,6 +25,8 @@ class TripManifestPassenger(Base):
     passenger_id: Mapped[int] = mapped_column(ForeignKey('passengers.id'), primary_key=True)
     # A parada pode ser removida após a viagem; o identificador preserva o vínculo original.
     stop_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dropoff_stop_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dropoff_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stop_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 

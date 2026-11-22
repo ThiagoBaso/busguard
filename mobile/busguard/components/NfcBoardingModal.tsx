@@ -46,7 +46,8 @@ export default function NfcBoardingModal({ tripId, onClose, onRecorded }: { trip
         setStep('resolving'); setMessage('Identificando aluno…');
         const result = await resolveNfcStudent(tripId, token, controller.signal);
         if (controller.signal.aborted) return;
-        if (result.pendingReview || result.status === 'absent') throw new Error('Este aluno não está disponível para registro. Consulte a chamada.');
+        if (result.status === 'alighted') throw new Error('Este passageiro já desembarcou nesta viagem.');
+      if (result.pendingReview || result.status === 'absent') throw new Error('Este aluno não está disponível para registro. Consulte a chamada.');
         setStudent(result); setStep('confirm');
       } catch (error) {
         if (!mounted.current) return;

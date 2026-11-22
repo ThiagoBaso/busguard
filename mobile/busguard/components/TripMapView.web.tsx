@@ -13,7 +13,7 @@ export default function TripMapView({ stops, position, positionLabel, route, rou
   const navigationLayer = useRef<Leaflet.LayerGroup | null>(null);
   const locationLayer = useRef<Leaflet.LayerGroup | null>(null);
   const fitted = useRef('');
-  const signature = JSON.stringify(stops.map(stop => [stop.id, stop.sequence, stop.latitude, stop.longitude, stop.address, stop.completed]));
+  const signature = JSON.stringify(stops.map(stop => [stop.id, stop.sequence, stop.latitude, stop.longitude, stop.address, stop.final, stop.completed]));
   const routeSignature = JSON.stringify(route);
   const nextRouteSignature = JSON.stringify(nextRoute);
   const fitSignature = `${signature}:${Boolean(position)}`;
@@ -44,11 +44,11 @@ export default function TripMapView({ stops, position, positionLabel, route, rou
     if (route.length > 1) leaflet.polyline(route.map(point => [point.latitude, point.longitude]), { color: '#bb8a00', weight: 4, dashArray: routed ? undefined : '8 8' }).addTo(layer);
     stops.forEach(stop => {
       const popup = document.createElement('div');
-      popup.textContent = `Parada ${stop.sequence}: ${stop.address}`;
+      popup.textContent = `${stop.final ? 'Destino final' : 'Parada'} ${stop.sequence}: ${stop.address}`;
       const label = document.createElement('span');
-      label.textContent = String(stop.sequence);
+      label.textContent = stop.final ? '⚑' : String(stop.sequence);
       const icon = leaflet.divIcon({ className: stop.completed ? 'trip-map-stop-marker trip-map-stop-marker-completed' : 'trip-map-stop-marker', html: label, iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -18] });
-      leaflet.marker([stop.latitude!, stop.longitude!], { icon, title: `Parada ${stop.sequence}`, zIndexOffset: 100 })
+      leaflet.marker([stop.latitude!, stop.longitude!], { icon, title: `${stop.final ? 'Destino final' : 'Parada'} ${stop.sequence}`, zIndexOffset: 100 })
         .bindPopup(popup).addTo(layer);
     });
     if (!followVehicle && (stops.length || position) && fitted.current !== fitSignature) {

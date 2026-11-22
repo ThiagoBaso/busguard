@@ -55,6 +55,8 @@ def create_trip_event(db: Session, trip_id: int, data: TripEventCreate, user_id:
         raise EventConflictError('A viagem não aceita eventos neste estado.')
 
     last = _latest_event_for_passenger(db, trip.vehicle_id, data.passenger_id, trip.started_at, trip.id, trip.finished_at, lock=True)
+    if trip.status == 'in_progress' and last and last.action.lower() == 'exit' and data.action.value == 'entry' and occurred >= (last.occurred_at or last.created_at):
+        raise EventConflictError('Passageiro já desembarcou nesta viagem.')
     now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
     reason = None
     pending = (db.query(AccessEvent.id).filter(AccessEvent.trip_id == trip_id,

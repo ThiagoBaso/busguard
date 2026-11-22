@@ -43,6 +43,7 @@ export default function QrBoardingModal({ tripId, onClose, onRecorded }: { tripI
     try {
       const found = await resolveQrStudent(tripId, token.current, request.signal);
       if (!mounted.current) return;
+      if (found.status === 'alighted') throw new Error('Este passageiro já desembarcou nesta viagem.');
       if (found.pendingReview || found.status === 'absent') throw new Error('Este passageiro não está disponível para registro. Consulte a chamada.');
       setStudent(found); setStep('confirm');
     } catch (error) {

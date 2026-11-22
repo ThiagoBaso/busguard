@@ -50,7 +50,7 @@ export default function RouteDetailsScreen() {
               <View key={student.id} style={styles.student}>
                 <AppText style={{ fontWeight: '700' }}>{student.name}</AppText>
                 <View style={styles.status}>
-                  <Badge label={student.status === 'absent' ? 'Ausente' : student.checkedIn ? 'A bordo' : 'Aguardando'} tone={student.checkedIn ? 'success' : 'neutral'} />
+                  <Badge label={student.status === 'absent' ? 'Ausente' : student.status === 'alighted' ? 'Desembarcou' : student.checkedIn ? 'A bordo' : 'Aguardando'} tone={student.checkedIn ? 'success' : 'neutral'} />
                   {student.checkedIn && student.time ? <AppText muted>Registro às {student.time}</AppText> : null}
                 </View>
               </View>

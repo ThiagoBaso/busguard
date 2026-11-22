@@ -197,8 +197,10 @@ a { color: inherit; }
 .stop-row strong { color: #4a5663; font-size: 10px; }
 .stop-row small { margin-top: 4px; color: #99a2ac; font-size: 9px; }
 .stop-row > .stop-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 4px; }
-.route-passenger-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
-.assigned-list .input { width: min(50%, 210px); }
+.route-passenger-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.assigned-list .input { width: 100%; }
+.assigned-list .field { flex: 1 1 125px; min-width: 0; }
+.assigned-list > div { flex-wrap: wrap; }
 .route-map { height: 310px; overflow: hidden; border: 1px solid #e4e8e7; border-radius: 5px; background: #edf1ed; }
 .route-map-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: #75818b; font-size: 10px; }
 .leaflet-tooltip.route-marker-label { padding: 0; border: 0; background: transparent; box-shadow: none; color: #4c3800; font-size: 10px; font-weight: 800; }

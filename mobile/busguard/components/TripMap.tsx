@@ -10,7 +10,7 @@ import { useTripQuery } from '@/hooks/useTripQuery';
 import { useNextStopRoute } from '@/hooks/useNextStopRoute';
 import { getDriverTripGeometry, getDriverTripMap } from '@/services/tripService';
 
-export default function TripMap({ tripId, position, nextStopSequence, sharing, onSharingChange }: { tripId: number; position: MapPoint | null; nextStopSequence: number | null; sharing: boolean; onSharingChange: (enabled: boolean) => void }) {
+export default function TripMap({ finished = false, tripId, position, nextStopSequence, sharing, onSharingChange }: { finished?: boolean; tripId: number; position: MapPoint | null; nextStopSequence: number | null; sharing: boolean; onSharingChange: (enabled: boolean) => void }) {
   const theme = useAppTheme();
   const mapUnavailable = Platform.OS === 'android' && process.env.EXPO_PUBLIC_DISABLE_NATIVE_MAP === '1';
   const insets = useSafeAreaInsets();
@@ -47,7 +47,7 @@ export default function TripMap({ tripId, position, nextStopSequence, sharing, o
   const route = useMemo(() => routed ? geometry!.points : located.length === stops.length ? located.map(({ latitude, longitude }) => ({ latitude, longitude })) : [], [routed, geometry, signature]);
   const shownPosition = position ?? (data?.location ? { latitude: data.location.latitude, longitude: data.location.longitude } : null);
   const positionLabel = data?.location?.source === 'demo' && !position ? 'Posição simulada' : 'Veículo';
-  const nextStop = selectNextStop(stops, nextStopSequence);
+  const nextStop = finished ? undefined : selectNextStop(stops, nextStopSequence);
   const locatedNextStop = located.find(stop => stop.id === nextStop?.id);
   const navigation = useNextStopRoute(tripId, locatedNextStop, shownPosition);
   const nextRoute = shownPosition && locatedNextStop

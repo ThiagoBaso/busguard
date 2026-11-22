@@ -17,6 +17,7 @@ type AlunoItemProps = {
 export default function AlunoItem({ aluno, disabled = false, pending = false, readOnly = false, showStop = true, onBoardingChange }: AlunoItemProps) {
   const theme = useAppTheme();
   const [expanded, setExpanded] = useState(false);
+  const delivered = aluno.status === 'alighted';
   const absent = aluno.status === 'absent';
   const initials = aluno.name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   const actionLabel = aluno.checkedIn ? 'Desembarcar' : 'Embarcar';
@@ -27,13 +28,13 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
       <View style={styles.heading}>
         <View style={styles.profile}>
           <View style={styles.profileTop}>
-            <View style={[styles.avatar, { backgroundColor: aluno.checkedIn ? theme.primarySoft : '#FFF7DE' }]}>
-              <AppText style={{ color: aluno.checkedIn ? theme.primary : '#8A6500', fontWeight: '800' }}>{initials || 'A'}</AppText>
+            <View style={[styles.avatar, { backgroundColor: (aluno.checkedIn || delivered) ? theme.primarySoft : '#FFF7DE' }]}>
+              <AppText style={{ color: (aluno.checkedIn || delivered) ? theme.primary : '#8A6500', fontWeight: '800' }}>{initials || 'A'}</AppText>
             </View>
             <View style={styles.identity}>
               <AppText style={styles.name}>{aluno.name}</AppText>
               <AppText muted style={{ fontSize: 12 }}>{aluno.age} anos{showStop && aluno.stopName ? ` · ${aluno.stopName}` : ''}</AppText>
-              {aluno.checkedIn && aluno.time ? <AppText muted style={styles.eventTime}>Embarque às {aluno.time}</AppText> : null}
+              {(aluno.checkedIn || delivered) && aluno.time ? <AppText muted style={styles.eventTime}>{delivered ? 'Desembarque' : 'Embarque'} às {aluno.time}</AppText> : null}
             </View>
           </View>
           <Pressable
@@ -48,11 +49,11 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
         <View style={styles.actions}>
           <View style={styles.statusBadge}>
             <Badge
-              label={aluno.pendingReview ? 'Precisa de revisão' : absent ? 'Ausente' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
-              tone={aluno.pendingReview || absent || !aluno.checkedIn ? 'warning' : 'success'}
+              label={aluno.pendingReview ? 'Precisa de revisão' : absent ? 'Ausente' : delivered ? 'Desembarcou' : aluno.checkedIn ? 'A bordo' : 'Aguardando'}
+              tone={aluno.pendingReview || absent || (!aluno.checkedIn && !delivered) ? 'warning' : 'success'}
             />
           </View>
-          {readOnly ? null : absent ? null : !aluno.checkedIn ? (
+          {readOnly || delivered || absent ? null : !aluno.checkedIn ? (
             <Button label={pending ? 'Confirmando…' : 'Embarcar'} accessibilityLabel={`${pending ? 'Confirmando embarque de' : 'Validar embarque de'} ${aluno.name}`} variant="success" style={styles.actionButton} disabled={disabled || aluno.pendingReview} loading={pending} onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, true); }} />
           ) : (
             <Button label={pending ? pendingLabel : actionLabel} accessibilityLabel={`${pending ? pendingLabel : actionLabel} de ${aluno.name}`} variant="secondary" style={styles.actionButton} disabled={disabled || pending || aluno.pendingReview} loading={pending} onPress={() => { if (!disabled && !pending && !aluno.pendingReview) onBoardingChange(aluno, false); }} />
@@ -61,9 +62,9 @@ export default function AlunoItem({ aluno, disabled = false, pending = false, re
       </View>
       {expanded ? (
         <View style={[styles.details, { backgroundColor: theme.surfaceAlt }]}>
-          <AppText variant="label" muted>Endereço cadastrado</AppText>
+          <AppText variant="label" muted>Embarque</AppText>
           <AppText>{aluno.address || 'Endereço não informado'}</AppText>
-          {aluno.stopName ? <AppText muted>Local informado: {aluno.stopName}</AppText> : null}
+          {aluno.dropoffAddress ? <AppText muted>Desembarque: {aluno.dropoffAddress}</AppText> : null}
         </View>
       ) : null}
       {absent && !readOnly ? <AppText muted>Embarque indisponível para aluno marcado como ausente.</AppText> : null}

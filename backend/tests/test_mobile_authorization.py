@@ -53,7 +53,7 @@ class MobileAuthorizationTests(unittest.TestCase):
             )
             connection.exec_driver_sql(
                 "CREATE TABLE routes (id INTEGER PRIMARY KEY, name TEXT, description TEXT, "
-                "shift TEXT, active BOOLEAN, created_at DATETIME)"
+                "shift TEXT, direction TEXT DEFAULT 'to_school', active BOOLEAN, created_at DATETIME)"
             )
             connection.exec_driver_sql(
                 "CREATE TABLE vehicles (id INTEGER PRIMARY KEY, plate TEXT, model TEXT, "

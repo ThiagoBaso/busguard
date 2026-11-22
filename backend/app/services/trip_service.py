@@ -71,14 +71,15 @@ def get_driver_current_trip(db: Session, user_id: int, role: str) -> dict:
     trip, route, vehicle, _driver, _driver_user = row
     students = _build_boarding_students(db, trip)
     checked_count = sum(1 for student in students if student.checkedIn)
-    total = len(students) or 1
+    finished_actions = checked_count + 2 * sum(student.status == 'alighted' for student in students)
+    total_actions = 2 * len(students) or 1
 
     return {
         "id": trip.id,
         "routeName": route.name,
         "vehicleLabel": f"{vehicle.model} {checked_count}/{vehicle.capacity} alunos",
         "status": "Em andamento",
-        "progressLabel": f"{round((checked_count / total) * 100)}% concluido",
+        "progressLabel": f"{round(finished_actions * 100 / total_actions)}% concluído",
         "students": students,
     }
 
@@ -106,27 +107,58 @@ def record_driver_communication(db: Session, user_id: int) -> TripCommunication:
     return communication
 
 
+def _trip_passenger_states(db: Session, trip: Trip):
+    latest: dict[int, AccessEvent] = {}
+    pending = set()
+    events = db.query(AccessEvent).filter(
+        AccessEvent.trip_id == trip.id, AccessEvent.vehicle_id == trip.vehicle_id,
+        AccessEvent.review_status.in_(['accepted', 'pending']),
+    ).order_by(func.coalesce(AccessEvent.occurred_at, AccessEvent.created_at).desc(), AccessEvent.id.desc())
+    for event in events:
+        if event.review_status == 'pending':
+            pending.add(event.passenger_id)
+        else:
+            latest.setdefault(event.passenger_id, event)
+    return latest, pending
+
+
+def stop_progress(db: Session, trip: Trip, stops: list[RouteStop]):
+    """Track pickup and drop-off independently, even when a stop serves both."""
+    states: dict[int, list[bool]] = {}
+    upcoming = set()
+    final_id = stops[-1].id if stops else None
+    assignments = db.query(RoutePassenger).filter_by(route_id=trip.route_id, active=True).all()
+    events, needs_review = _trip_passenger_states(db, trip)
+    for link in assignments:
+        pending = link.passenger_id in needs_review
+        latest = events.get(link.passenger_id)
+        boarded = latest is not None and not pending
+        delivered = _event_has_action(latest, 'exit') and not pending
+        dropoff = link.dropoff_stop_id or (final_id if final_id != link.stop_id else None)
+        if link.stop_id:
+            states.setdefault(link.stop_id, []).append(boarded)
+        if dropoff:
+            states.setdefault(dropoff, []).append(delivered)
+        if not delivered:
+            upcoming.add(dropoff if boarded else link.stop_id)
+    next_stop = next((stop for stop in stops if stop.id in upcoming), None)
+    return {stop_id for stop_id, actions in states.items() if all(actions)}, next_stop
+
+
 def get_driver_trip_map(db: Session, trip_id: int, user_id: int, role: str) -> dict:
     trip = get_authorized_active_trip(db, trip_id, user_id, role)
     stops = (db.query(RouteStop, Address).join(Address, Address.id == RouteStop.address_id)
              .filter(RouteStop.route_id == trip.route_id).order_by(RouteStop.sequence, RouteStop.id).all())
     location = (db.query(VehicleLocation).filter(VehicleLocation.trip_id == trip.id)
                 .order_by(VehicleLocation.recorded_at.desc(), VehicleLocation.id.desc()).first())
-    assignments = (db.query(RoutePassenger).filter(
-        RoutePassenger.route_id == trip.route_id,
-        RoutePassenger.active == True,
-        RoutePassenger.stop_id.isnot(None),
-    ).all())
-    passengers_by_stop: dict[int, list[bool]] = {}
-    for assignment in assignments:
-        passengers_by_stop.setdefault(assignment.stop_id, []).append(_passenger_boarded_for_trip(db, trip, assignment.passenger_id))
+    completed, _ = stop_progress(db, trip, [stop for stop, _ in stops])
     return {
         "trip_id": trip.id,
         "stops": [{"id": stop.id, "sequence": stop.sequence,
                    "address": f"{address.rua}, {address.numero} - {address.bairro}",
                    "latitude": address.latitude, "longitude": address.longitude,
                    "coordinate_source": address.coordinate_source,
-                   "completed": bool(passengers_by_stop.get(stop.id)) and all(passengers_by_stop[stop.id])} for stop, address in stops],
+                   "final": stop.id == stops[-1][0].id, "completed": stop.id in completed} for stop, address in stops],
         "location": None if location is None else {
             "latitude": location.latitude, "longitude": location.longitude,
             "source": location.source, "recorded_at": location.recorded_at,
@@ -261,6 +293,8 @@ def set_boarding_status(
     latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger_id, trip.started_at, trip.id, trip.finished_at, lock=True)
     next_action = "entry" if checked_in else "exit"
 
+    if checked_in and _event_has_action(latest_event, 'exit'):
+        raise ValueError('Passageiro já desembarcou nesta viagem.')
     if _event_has_action(latest_event, next_action):
         return {
             "passenger_id": passenger_id,
@@ -321,9 +355,11 @@ def record_vehicle_location(
 
 
 def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
+    destinations = {stop.id: (stop, address) for stop, address in db.query(RouteStop, Address).join(Address, Address.id == RouteStop.address_id).filter(RouteStop.route_id == trip.route_id).order_by(RouteStop.sequence).all()}
+    final_id = next(reversed(destinations), None)
     stop_address = aliased(Address)
     passengers = (
-        db.query(Passenger, Address, RouteStop, stop_address)
+        db.query(Passenger, Address, RouteStop, stop_address, RoutePassenger.dropoff_stop_id)
         .join(RoutePassenger, RoutePassenger.passenger_id == Passenger.id)
         .join(Address, Address.id == Passenger.addresses_id)
         .outerjoin(RouteStop, and_(RouteStop.id == RoutePassenger.stop_id, RouteStop.route_id == trip.route_id))
@@ -334,14 +370,16 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
     )
 
     students = []
-    last_sequence = max((stop.sequence for _, _, stop, _ in passengers if stop), default=0)
+    last_sequence = destinations[final_id][0].sequence if final_id else 0
+    events, needs_review = _trip_passenger_states(db, trip)
 
-    for index, (passenger, home_address, stop, pickup_address) in enumerate(passengers, start=1):
+    for index, (passenger, home_address, stop, pickup_address, dropoff_id) in enumerate(passengers, start=1):
+        destination, destination_address = destinations.get(dropoff_id or final_id, (None, None))
         address = pickup_address or home_address
-        latest_event = _latest_event_for_passenger(db, trip.vehicle_id, passenger.id, trip.started_at, trip.id, trip.finished_at)
-        pending = _has_pending_event(db, trip.id, passenger.id)
+        latest_event = events.get(passenger.id)
+        pending = passenger.id in needs_review
         checked_in = _event_has_action(latest_event, "entry") and not pending
-        boarded = _passenger_boarded_for_trip(db, trip, passenger.id)
+        boarded = latest_event is not None and not pending
         students.append(
             BoardingStudent(
                 id=str(passenger.id),
@@ -349,12 +387,15 @@ def _build_boarding_students(db: Session, trip: Trip) -> list[BoardingStudent]:
                 age=_age_from_birth_date(passenger.birth_date),
                 stopOrder=stop.sequence if stop else last_sequence + index,
                 stopName=address.rua,
+                dropoffOrder=destination.sequence if destination else None,
+                dropoffName=destination_address.rua if destination_address else None,
+                dropoffAddress=f'{destination_address.rua}, {destination_address.numero}' if destination_address else None,
                 address=f"{address.rua}, {address.numero}",
                 checkedIn=checked_in,
                 boarded=boarded,
                 pendingReview=pending,
-                status="review" if pending else "present" if checked_in else "waiting",
-                time=latest_event.created_at.strftime("%H:%M") if latest_event and checked_in else None,
+                status="review" if pending else "present" if checked_in else "alighted" if _event_has_action(latest_event, "exit") else "waiting",
+                time=(latest_event.occurred_at or latest_event.created_at).strftime("%H:%M") if latest_event and not pending else None,
             )
         )
 

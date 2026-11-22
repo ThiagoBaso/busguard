@@ -55,6 +55,8 @@ def create_access_event(db: Session, data: AccessEventCreate, actor_id: int | No
     from app.services.trip_service import _has_pending_event, _latest_event_for_passenger
     pending = _has_pending_event(db, trip.id, data.passenger_id)
     previous = _latest_event_for_passenger(db, data.vehicle_id, data.passenger_id, trip.started_at, trip.id, trip.finished_at, lock=True)
+    if previous and previous.action.lower() == 'exit' and data.action.value == 'entry':
+        raise EventTripError('Passageiro já desembarcou nesta viagem.')
     reason = ('Há outro evento deste passageiro aguardando revisão.' if pending else
               'Ação repetida precisa de confirmação.' if previous and previous.action.lower() == data.action.value else
               'Desembarque sem embarque confirmado.' if not previous and data.action.value == 'exit' else None)

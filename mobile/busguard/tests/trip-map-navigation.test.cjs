@@ -54,6 +54,16 @@ test('mapa usa a parada aguardada e exibe trajeto atual sem textos removidos', a
   await act(async () => renderer.unmount());
 });
 
+test('volta segue os desembarques individuais até terminar a viagem dos passageiros', () => {
+  const { nextBoardingStopSequence } = transpile('components/tripMapTypes.ts', {});
+  const first = { stopOrder: 1, dropoffOrder: 2, status: 'present', checkedIn: true, boarded: true };
+  const second = { ...first, dropoffOrder: 3 };
+  assert.equal(nextBoardingStopSequence([first, second]), 2);
+  const delivered = { ...first, checkedIn: false, status: 'alighted' };
+  assert.equal(nextBoardingStopSequence([delivered, second]), 3);
+  assert.equal(nextBoardingStopSequence([delivered]), null);
+});
+
 test('proxima parada avanca depois do primeiro embarque e nao volta no desembarque', () => {
   const mapTypes = transpile('components/tripMapTypes.ts', {});
   const sequence = mapTypes.nextBoardingStopSequence([

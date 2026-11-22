@@ -63,6 +63,7 @@ from app.services.admin_service import (
     reorder_route_stops,
     start_trip as start_trip_service,
     update_record,
+    create_return_route,
     update_driver_profile,
     update_user as update_user_service,
 )
@@ -135,7 +136,8 @@ def get_trip_manifest(trip_id: int, db: Session = Depends(get_db), current_user=
             'supervisor_user_id': manifest.supervisor_user_id, 'supervisor_name': supervisor.name if supervisor else None,
             'captured_at': manifest.captured_at.isoformat() + 'Z',
             'passengers': [{'passenger_id': link.passenger_id, 'name': name, 'stop_id': link.stop_id,
-                            'stop_sequence': link.stop_sequence} for link, name in passengers]}
+                            'stop_sequence': link.stop_sequence, 'dropoff_stop_id': link.dropoff_stop_id,
+                            'dropoff_sequence': link.dropoff_sequence} for link, name in passengers]}
 
 
 @router.get('/routes/{route_id}/changes')
@@ -231,7 +233,7 @@ def list_trip_locations(trip_id: int, limit: int = 100, db: Session = Depends(ge
     )
 
 
-@router.get("/trips/{trip_id}/next-stop-geometry", response_model=NextStopRouteRead)
+@router.get("/trips/{trip_id}/next-stop-geometry", response_model=NextStopRouteRead | None)
 def get_trip_next_stop_geometry(trip_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     try:
         return calculate_admin_next_stop_route(db, trip_id)
@@ -469,6 +471,11 @@ def update_route(record_id: int, data: RouteUpdate, db: Session = Depends(get_db
 @router.delete("/routes/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_route(record_id: int, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     return _delete(db, Route, record_id)
+
+
+@router.post('/routes/{route_id}/return-route', response_model=RouteRead, status_code=201)
+def return_route(route_id: int, db: Session = Depends(get_db), current_user=Depends(require_role('admin'))):
+    return _trip_action(create_return_route, db, route_id)
 
 
 @router.get("/route-stops", response_model=list[RouteStopRead])

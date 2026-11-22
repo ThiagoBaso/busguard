@@ -74,7 +74,7 @@ def create_record(db: Session, model: ModelType, data: BaseModel, actor_id: int 
     if model in (RoutePassenger, RouteStop):
         _lock_editable_routes(db, [values['route_id']])
     if model is RoutePassenger:
-        _validate_route_stop(db, values["route_id"], values.get("stop_id"))
+        _validate_passenger_stops(db, values["route_id"], values.get("stop_id"), values.get("dropoff_stop_id"))
     record = model(**values)
     return _persist(db, record, actor_id=actor_id, audit_action='create')
 
@@ -117,9 +117,14 @@ def update_record(db: Session, model: ModelType, record_id: int, data: BaseModel
         if values['user_id'] != record.user_id and db.query(Trip.id).filter(Trip.supervisor_id == record.id, Trip.status == 'in_progress').with_for_update().first():
             raise AdminValidationError('Não é possível trocar a conta do supervisor durante uma viagem.')
     if model is RoutePassenger:
-        _validate_route_stop(db, values.get("route_id", record.route_id), values.get("stop_id", record.stop_id))
+        _validate_passenger_stops(db, values.get("route_id", record.route_id), values.get("stop_id", record.stop_id),
+                                  values.get("dropoff_stop_id", record.dropoff_stop_id))
+    if model is Route and 'direction' in values and values['direction'] != record.direction:
+        _lock_editable_routes(db, [record.id])
+        if not values['direction']:
+            raise AdminValidationError('Informe o sentido da rota.')
     if model is RouteStop and "route_id" in values and values["route_id"] != record.route_id:
-        if db.query(RoutePassenger.id).filter(RoutePassenger.stop_id == record.id).first():
+        if db.query(RoutePassenger.id).filter((RoutePassenger.stop_id == record.id) | (RoutePassenger.dropoff_stop_id == record.id)).first():
             raise AdminValidationError("Desvincule os passageiros antes de mover a parada para outra rota.")
     if model is Address and ("latitude" in values or "longitude" in values):
         record.coordinate_source = "manual"
@@ -141,12 +146,16 @@ def _lock_editable_routes(db: Session, route_ids: list[int]) -> None:
             raise AdminValidationError('A rota possui viagem em andamento; altere paradas ou passageiros após o encerramento.')
 
 
-def _validate_route_stop(db: Session, route_id: int, stop_id: int | None) -> None:
-    if stop_id is None:
+def _validate_passenger_stops(db: Session, route_id: int, pickup: int | None, dropoff: int | None) -> None:
+    ids = {value for value in (pickup, dropoff) if value is not None}
+    if not ids:
         return
-    stop = db.query(RouteStop).filter(RouteStop.id == stop_id).with_for_update().first()
-    if stop is None or stop.route_id != route_id:
+    stops = db.query(RouteStop).filter(RouteStop.route_id == route_id, RouteStop.id.in_(ids)).with_for_update().all()
+    sequence = {stop.id: stop.sequence for stop in stops}
+    if sequence.keys() != ids:
         raise AdminValidationError("A parada precisa pertencer à rota selecionada.")
+    if pickup is not None and dropoff is not None and sequence[pickup] >= sequence[dropoff]:
+        raise AdminValidationError('O desembarque precisa ocorrer depois do embarque.')
 
 
 def reorder_route_stops(db: Session, route_id: int, stop_ids: list[int], actor_id: int | None = None) -> list[RouteStop]:
@@ -156,6 +165,18 @@ def reorder_route_stops(db: Session, route_id: int, stop_ids: list[int], actor_i
     previous = {stop.id: _route_state(stop) for stop in stops}
     if len(stop_ids) != len(by_id) or set(stop_ids) != set(by_id):
         raise AdminValidationError("Informe todas as paradas da rota uma única vez.")
+    positions = {stop_id: index for index, stop_id in enumerate(stop_ids)}
+    assignments = db.query(RoutePassenger).filter_by(route_id=route_id, active=True).all()
+    for assignment in assignments:
+        if assignment.stop_id is not None and assignment.dropoff_stop_id is not None:
+            if positions[assignment.stop_id] >= positions[assignment.dropoff_stop_id]:
+                raise AdminValidationError('A nova ordem coloca um desembarque antes do embarque. Confira os pontos dos passageiros.')
+    positions = {stop_id: index for index, stop_id in enumerate(stop_ids)}
+    assignments = db.query(RoutePassenger).filter_by(route_id=route_id, active=True).all()
+    for assignment in assignments:
+        if assignment.stop_id is not None and assignment.dropoff_stop_id is not None:
+            if positions[assignment.stop_id] >= positions[assignment.dropoff_stop_id]:
+                raise AdminValidationError('A nova ordem coloca um desembarque antes do embarque. Confira os pontos dos passageiros.')
     temporary_base = max((stop.sequence for stop in stops), default=0) + len(stops) + 1
     if temporary_base + len(stops) > 2_147_483_647:
         raise AdminValidationError("Não foi possível reorganizar a ordem das paradas.")
@@ -282,6 +303,41 @@ def update_driver_profile(db: Session, driver_id: int, data: DriverProfileUpdate
     return {"driver": driver, "user": user, "cnh": cnh}
 
 
+def create_return_route(db: Session, route_id: int) -> Route:
+    source = db.query(Route).filter_by(id=route_id).with_for_update().first()
+    if source is None:
+        raise AdminNotFoundError
+    if source.direction != 'to_school':
+        raise AdminValidationError('Selecione uma rota de ida à escola.')
+    stops = db.query(RouteStop).filter_by(route_id=route_id).order_by(RouteStop.sequence).all()
+    if len(stops) < 2:
+        raise AdminValidationError('Cadastre as paradas de embarque e a escola antes de criar a volta.')
+    links = db.query(RoutePassenger).filter_by(route_id=route_id, active=True).all()
+    sequence = {stop.id: stop.sequence for stop in stops}
+    for link in links:
+        destination = link.dropoff_stop_id or stops[-1].id
+        if link.stop_id not in sequence or destination not in sequence or sequence[link.stop_id] >= sequence[destination]:
+            raise AdminValidationError('Confira os pontos de embarque e desembarque dos passageiros da ida.')
+    try:
+        route = Route(name=f'{source.name[:92]} · Volta', direction='from_school', shift=source.shift, active=True)
+        db.add(route)
+        db.flush()
+        reverse_stops = {}
+        for order, stop in enumerate(reversed(stops), start=1):
+            reverse_stops[stop.id] = RouteStop(route_id=route.id, address_id=stop.address_id, sequence=order)
+        db.add_all(reverse_stops.values())
+        db.flush()
+        for link in links:
+            db.add(RoutePassenger(route_id=route.id, passenger_id=link.passenger_id,
+                                  stop_id=reverse_stops[link.dropoff_stop_id or stops[-1].id].id,
+                                  dropoff_stop_id=reverse_stops[link.stop_id].id, active=True))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise AdminConflictError from exc
+    return route
+
+
 def start_trip(db: Session, trip_id: int) -> Trip:
     original = db.query(Trip.route_id, Trip.driver_id, Trip.supervisor_id).filter(Trip.id == trip_id).first()
     if original is None:
@@ -306,9 +362,15 @@ def start_trip(db: Session, trip_id: int) -> Trip:
     sequences = {stop.id: stop.sequence for stop in db.query(RouteStop).filter(RouteStop.route_id == trip.route_id).all()}
     db.add(TripManifest(trip_id=trip.id, route_id=trip.route_id, vehicle_id=trip.vehicle_id,
                         driver_user_id=driver.users_id, supervisor_user_id=supervisor.user_id if supervisor else None))
+    final_stop = max(sequences, key=sequences.get) if sequences else None
+    returning = db.get(Route, route_id).direction == 'from_school'
     for assignment in assignments:
+        dropoff = assignment.dropoff_stop_id or final_stop
+        if returning or assignment.dropoff_stop_id is not None:
+            if not assignment.dropoff_stop_id or assignment.stop_id not in sequences or dropoff not in sequences or sequences[assignment.stop_id] >= sequences[dropoff]:
+                raise AdminValidationError('O embarque deve preceder o desembarque de cada passageiro. Confira os pontos da rota.')
         db.add(TripManifestPassenger(trip_id=trip.id, passenger_id=assignment.passenger_id, stop_id=assignment.stop_id,
-                                    stop_sequence=sequences.get(assignment.stop_id)))
+                                    stop_sequence=sequences.get(assignment.stop_id), dropoff_stop_id=dropoff, dropoff_sequence=sequences.get(dropoff)))
 
     trip.status = "in_progress"
     trip.started_at = trip.started_at or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -350,7 +412,7 @@ def _get_trip(db: Session, trip_id: int) -> Trip:
 def _route_state(record: Any) -> dict | None:
     if isinstance(record, RoutePassenger):
         return {'route_id': record.route_id, 'passenger_id': record.passenger_id,
-                'stop_id': record.stop_id, 'active': bool(record.active)}
+                'stop_id': record.stop_id, 'dropoff_stop_id': record.dropoff_stop_id, 'active': bool(record.active)}
     if isinstance(record, RouteStop):
         return {'route_id': record.route_id, 'address_id': record.address_id, 'sequence': record.sequence}
     return None

@@ -68,6 +68,37 @@ class RouteMappingTests(unittest.TestCase):
         students = _build_boarding_students(self.db, SimpleNamespace(id=1, route_id=1, vehicle_id=1, started_at=None, finished_at=None))
         self.assertEqual([(student.id, student.stopOrder) for student in students], [("3", 1), ("1", 2), ("2", 2)])
 
+    def test_return_picks_up_at_school_and_completes_each_house_after_its_last_exit(self):
+        from app.services.admin_service import create_return_route
+        from app.services.trip_service import stop_progress
+        self.db.add(RouteStop(id=4, route_id=1, address_id=3, sequence=3))
+        self.db.commit()
+        returning = create_return_route(self.db, 1)
+        stops = self.db.query(RouteStop).filter_by(route_id=returning.id).order_by(RouteStop.sequence).all()
+        school, first_house, last_house = stops
+        self.assertEqual(returning.direction, 'from_school')
+        self.assertEqual([s.address_id for s in stops], [3, 1, 2])
+        trip = Trip(id=91, route_id=returning.id, vehicle_id=1, driver_id=1, trip_date=date.today(), status='in_progress')
+        self.db.add(trip)
+        self.db.commit()
+
+        def register(passenger_id, action):
+            self.db.add(AccessEvent(trip_id=trip.id, passenger_id=passenger_id, vehicle_id=1, action=action))
+            self.db.commit()
+
+        self.assertEqual(stop_progress(self.db, trip, stops), (set(), school))
+        for passenger_id in (1, 2, 3):
+            register(passenger_id, 'entry')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({school.id}, first_house))
+        register(1, 'exit')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({school.id}, first_house))
+        student = next(s for s in _build_boarding_students(self.db, trip) if s.id == '1')
+        self.assertEqual((student.status, student.checkedIn, student.dropoffOrder), ('alighted', False, 2))
+        register(2, 'exit')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({school.id, first_house.id}, last_house))
+        register(3, 'exit')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({s.id for s in stops}, None))
+
     def test_stop_must_belong_to_the_same_route(self):
         with self.assertRaises(AdminValidationError):
             create_record(self.db, RoutePassenger, RoutePassengerCreate(route_id=1, passenger_id=3, stop_id=3))
@@ -76,6 +107,47 @@ class RouteMappingTests(unittest.TestCase):
             update_record(self.db, RoutePassenger, 1, RoutePassengerUpdate(stop_id=3))
         with self.assertRaises(AdminValidationError):
             update_record(self.db, RouteStop, 1, RouteStopUpdate(route_id=2))
+
+    def test_reordering_cannot_put_dropoff_before_pickup(self):
+        self.db.get(RoutePassenger, 3).dropoff_stop_id = 1
+        self.db.commit()
+        with self.assertRaises(AdminValidationError):
+            reorder_route_stops(self.db, 1, [1, 2])
+        self.db.expire_all()
+        self.assertEqual(self.db.get(RouteStop, 2).sequence, 1)
+        self.assertEqual(self.db.get(RouteStop, 1).sequence, 2)
+
+    def test_next_stop_handles_pickup_and_dropoff_at_the_same_stop(self):
+        from app.services.trip_service import stop_progress
+        self.db.add(RouteStop(id=4, route_id=1, address_id=3, sequence=3))
+        for passenger_id in (1, 2):
+            link = self.db.get(RoutePassenger, passenger_id)
+            link.stop_id = 2
+            link.dropoff_stop_id = 1
+        self.db.get(RoutePassenger, 3).stop_id = 1
+        self.db.get(RoutePassenger, 3).dropoff_stop_id = 4
+        trip = Trip(id=92, route_id=1, vehicle_id=1, driver_id=1, trip_date=date.today(), status='in_progress')
+        self.db.add(trip)
+        self.db.commit()
+        stops = self.db.query(RouteStop).filter_by(route_id=1).order_by(RouteStop.sequence).all()
+        first, mixed, final = stops
+
+        def register(passenger_id, action):
+            self.db.add(AccessEvent(trip_id=trip.id, passenger_id=passenger_id, vehicle_id=1, action=action))
+            self.db.commit()
+
+        register(1, 'entry')
+        self.assertEqual(stop_progress(self.db, trip, stops), (set(), first))
+        register(2, 'entry')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({first.id}, mixed))
+        register(1, 'exit')
+        register(2, 'exit')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({first.id}, mixed))
+        register(3, 'entry')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({first.id, mixed.id}, final))
+        register(3, 'exit')
+        self.assertEqual(stop_progress(self.db, trip, stops), ({stop.id for stop in stops}, None))
+        self.assertTrue(all(student.status == 'alighted' for student in _build_boarding_students(self.db, trip)))
 
     def test_reordering_preserves_stop_ids_and_passenger_links(self):
         reordered = reorder_route_stops(self.db, 1, [1, 2])

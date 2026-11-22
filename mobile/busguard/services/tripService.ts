@@ -6,11 +6,14 @@ export type BoardingStudent = {
   age: number;
   stopOrder: number;
   stopName: string;
+  dropoffOrder?: number | null;
+  dropoffName?: string | null;
+  dropoffAddress?: string | null;
   address: string;
   checkedIn: boolean;
   boarded?: boolean;
   pendingReview?: boolean;
-  status: 'waiting' | 'present' | 'absent' | 'review';
+  status: 'waiting' | 'present' | 'absent' | 'review' | 'alighted';
   time?: string | null;
 };
 
@@ -23,7 +26,7 @@ export type DriverTrip = {
   students: BoardingStudent[];
 };
 
-export type TripMapStop = { id: number; sequence: number; address: string; latitude: number | null; longitude: number | null; coordinate_source: string; completed?: boolean };
+export type TripMapStop = { id: number; sequence: number; address: string; latitude: number | null; longitude: number | null; coordinate_source: string; final?: boolean; completed?: boolean };
 export type TripMapData = { trip_id: number; stops: TripMapStop[]; location: { latitude: number; longitude: number; source: string; recorded_at: string } | null };
 export type TripGeometry = { coordinates: [number, number][]; distance_m: number; duration_s: number };
 

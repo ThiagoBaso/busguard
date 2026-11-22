@@ -19,6 +19,12 @@ export function selectNextStop(stops: TripMapStop[], sequence: number | null) {
 }
 
 export function nextBoardingStopSequence(students: BoardingStudent[]) {
-  return students.filter(student => !(student.boarded ?? student.checkedIn) && student.status !== 'absent')
-    .reduce<number | null>((next, student) => next === null || student.stopOrder < next ? student.stopOrder : next, null);
+  const orders = students.map(nextPassengerStop).filter((order): order is number => order != null);
+  return orders.length ? Math.min(...orders) : null;
+}
+
+export function nextPassengerStop(student: BoardingStudent) {
+  if (student.status === 'absent' || student.status === 'alighted') return null;
+  if (student.checkedIn) return student.dropoffOrder ?? null;
+  return student.boarded ? null : student.stopOrder;
 }

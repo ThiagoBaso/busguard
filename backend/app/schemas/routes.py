@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +10,7 @@ class RouteBase(BaseModel):
     name: str = Field(max_length=100)
     description: Optional[str] = Field(default=None, max_length=255)
     shift: RouteShift
+    direction: Literal['to_school', 'from_school'] = 'to_school'
     active: bool = True
 
 
@@ -21,6 +22,7 @@ class RouteUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=100)
     description: Optional[str] = Field(default=None, max_length=255)
     shift: Optional[RouteShift] = None
+    direction: Literal['to_school', 'from_school'] | None = None
     active: Optional[bool] = None
 
 

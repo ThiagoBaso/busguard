@@ -83,7 +83,7 @@ def calculate_navigation_route(db: Session, route_id: int, stop_id: int, latitud
     return _request_osrm(base_url, (f'{longitude:.6f},{latitude:.6f}', f'{lon:.6f},{lat:.6f}'))
 
 
-def calculate_admin_next_stop_route(db: Session, trip_id: int) -> dict:
+def calculate_admin_next_stop_route(db: Session, trip_id: int) -> dict | None:
     """Traça do último GPS da viagem até a próxima parada com aluno aguardando."""
     trip = db.get(Trip, trip_id)
     if trip is None or trip.status != "in_progress":
@@ -93,28 +93,11 @@ def calculate_admin_next_stop_route(db: Session, trip_id: int) -> dict:
     if location is None:
         raise RouteCoordinatesError("A viagem ainda não possui uma posição GPS.")
 
-    assignments = (db.query(RoutePassenger, RouteStop)
-                   .join(Passenger, Passenger.id == RoutePassenger.passenger_id)
-                   .join(RouteStop, RouteStop.id == RoutePassenger.stop_id)
-                   .filter(RoutePassenger.route_id == trip.route_id, RoutePassenger.active.is_(True))
-                   .order_by(RouteStop.sequence, RouteStop.id).all())
-    waiting_sequences: list[int] = []
-    final_sequence = 0
-    for assignment, stop in assignments:
-        final_sequence = max(final_sequence, stop.sequence)
-        from app.services.trip_service import _passenger_boarded_for_trip
-        boarded = _passenger_boarded_for_trip(db, trip, assignment.passenger_id)
-        if not boarded:
-            waiting_sequences.append(stop.sequence)
-
-    final_route_sequence = db.query(RouteStop.sequence).filter(RouteStop.route_id == trip.route_id).order_by(RouteStop.sequence.desc()).limit(1).scalar() or final_sequence
-    next_sequence = min(waiting_sequences) if waiting_sequences else final_route_sequence
-    if not next_sequence:
-        raise RouteCoordinatesError("A rota não possui paradas com passageiros vinculados.")
-    target = (db.query(RouteStop).filter(RouteStop.route_id == trip.route_id, RouteStop.sequence == next_sequence)
-             .order_by(RouteStop.id).first())
+    from app.services.trip_service import stop_progress
+    stops = db.query(RouteStop).filter_by(route_id=trip.route_id).order_by(RouteStop.sequence, RouteStop.id).all()
+    _, target = stop_progress(db, trip, stops)
     if target is None:
-        raise RouteCoordinatesError("Não foi possível identificar a próxima parada.")
+        return None
     try:
         geometry = calculate_navigation_route(db, trip.route_id, target.id, location.latitude, location.longitude)
         return {**geometry, "stop_id": target.id, "stop_sequence": target.sequence, "routed": True}

@@ -18,7 +18,7 @@ import { useLocationSharing } from '@/services/locationSharing';
 import { useDriverTripSnapshot } from '@/services/driverTripSync';
 import TripSummary from '@/components/TripSummary';
 import TripMap from '@/components/TripMap';
-import { nextBoardingStopSequence } from '@/components/tripMapTypes';
+import { nextBoardingStopSequence, nextPassengerStop } from '@/components/tripMapTypes';
 
 type Filter = 'all' | 'waiting' | 'boarded';
 const filters: { value: Filter; label: string }[] = [
@@ -84,40 +84,28 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
   }, [trip, search, filter]);
 
   const studentsByStop = useMemo(() => {
-    const groups = new Map<string, { stopOrder: number; stopName: string; students: BoardingStudent[] }>();
-    [...visibleStudents].sort((a, b) => a.stopOrder - b.stopOrder).forEach((student) => {
-      const stopName = student.stopName.trim() || 'Parada sem identificação';
-      const key = `${student.stopOrder}:${normalize(stopName)}`;
-      const group = groups.get(key);
-      if (group) {
-        group.students.push(student);
-      } else {
-        groups.set(key, { stopOrder: student.stopOrder, stopName, students: [student] });
-      }
-    });
-    return [...groups.entries()].map(([key, group]) => {
-      const stopStudents = (trip?.students ?? []).filter((student) => (
-        student.stopOrder === group.stopOrder &&
-        normalize(student.stopName.trim() || 'Parada sem identificação') === normalize(group.stopName)
-      ));
-      return { key, ...group, allBoarded: stopStudents.length > 0 && stopStudents.every((student) => student.checkedIn) };
-    });
+    const groups = new Map<number, { stopOrder: number; stopName: string; students: BoardingStudent[]; allBoarded: boolean }>();
+    const visible = new Set(visibleStudents.map(student => student.id));
+    for (const student of trip?.students ?? []) {
+      const atDestination = (student.checkedIn || student.status === 'alighted') && student.dropoffOrder != null;
+      const order = atDestination ? student.dropoffOrder! : student.stopOrder;
+      const name = atDestination ? student.dropoffName : student.stopName;
+      const group = groups.get(order) ?? { stopOrder: order, stopName: name || 'Parada sem identificação', students: [], allBoarded: true };
+      group.allBoarded &&= student.status === 'alighted';
+      if (visible.has(student.id)) group.students.push(student);
+      groups.set(order, group);
+    }
+    return [...groups.values()].filter(group => group.students.length).sort((a, b) => a.stopOrder - b.stopOrder)
+      .map(group => ({ ...group, key: String(group.stopOrder) }));
   }, [visibleStudents, trip]);
 
   const nextStop = useMemo(() => {
     const nextSequence = nextBoardingStopSequence(trip?.students ?? []);
-    const upcoming = (trip?.students ?? []).filter(student => student.stopOrder === nextSequence && !(student.boarded ?? student.checkedIn) && student.status !== 'absent');
-    const first = upcoming[0];
-    if (!first) return null;
-    const stopName = first.stopName.trim() || 'Parada sem identificação';
-    return {
-      stopOrder: first.stopOrder,
-      stopName,
-      students: upcoming.filter((student) => (
-        student.stopOrder === first.stopOrder &&
-        normalize(student.stopName.trim() || 'Parada sem identificação') === normalize(stopName)
-      )),
-    };
+    const students = (trip?.students ?? []).filter(student => nextSequence !== null && nextPassengerStop(student) === nextSequence);
+    const first = students[0];
+    if (!first || nextSequence === null) return null;
+    const stopName = (first.checkedIn ? first.dropoffName : first.stopName) || 'Parada sem identificação';
+    return { stopOrder: nextSequence, stopName, students };
   }, [trip]);
   const nextStudent = nextStop?.students[0] ?? null;
 
@@ -172,10 +160,10 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
 
   const boarded = trip?.students.filter((student) => student.checkedIn).length ?? 0;
   const waiting = trip?.students.filter((student) => student.status === 'waiting').length ?? 0;
-  const absent = trip?.students.filter((student) => student.status === 'absent').length ?? 0;
   const inReview = trip?.students.filter((student) => student.pendingReview).length ?? 0;
-  const eligibleStudents = boarded + waiting + inReview;
-  const boardingProgress = eligibleStudents ? Math.round(boarded / eligibleStudents * 100) : 0;
+  const delivered = trip?.students.filter(student => student.status === 'alighted').length ?? 0;
+  const eligibleStudents = boarded + delivered + waiting + inReview;
+  const boardingProgress = eligibleStudents ? Math.round((boarded + delivered) / eligibleStudents * 100) : 0;
   const failureMessage = query.errorStatus === 403
     ? 'Seu perfil não tem acesso a esta viagem. Confira sua conta ou procure a administração.'
     : query.errorStatus === 404
@@ -214,12 +202,12 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
             disabled={pendingId !== null || Boolean(query.error)}
             compact={listOnly}
           /> : null}
-          {!listOnly ? <TripMap tripId={trip.id} position={sharing.tripId === trip.id ? sharing.position : null} nextStopSequence={nextStop?.stopOrder ?? null} sharing={sharing.active} onSharingChange={(enabled) => enabled ? void sharing.start(trip.id) : sharing.stop()} /> : null}
+          {!listOnly ? <TripMap finished={delivered > 0 && delivered === eligibleStudents} tripId={trip.id} position={sharing.tripId === trip.id ? sharing.position : null} nextStopSequence={nextStop?.stopOrder ?? null} sharing={sharing.active} onSharingChange={(enabled) => enabled ? void sharing.start(trip.id) : sharing.stop()} /> : null}
           <Card style={styles.progressCard}>
             <View style={styles.progressHeading}>
               <View style={styles.progressTitleGroup}>
                 <AppText variant="label" muted>RESUMO DA CHAMADA</AppText>
-                <AppText style={styles.progressTitle}>{boarded} de {eligibleStudents} embarcados</AppText>
+                <AppText style={styles.progressTitle}>{boarded + delivered} de {eligibleStudents} embarcados</AppText>
               </View>
               <AppText style={styles.progressPercent}>{boardingProgress}%</AppText>
             </View>
@@ -236,8 +224,8 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                 <AppText muted style={styles.callCountLabel}>Aguardando</AppText>
               </View>
               <View style={[styles.callCount, { backgroundColor: '#FFF7DE' }]}>
-                <AppText style={[styles.callCountValue, { color: '#8A6500' }]}>{absent}</AppText>
-                <AppText muted style={styles.callCountLabel}>Ausentes</AppText>
+                <AppText style={[styles.callCountValue, { color: '#8A6500' }]}>{delivered}</AppText>
+                <AppText muted style={styles.callCountLabel}>Desembarcaram</AppText>
               </View>
             </View>
             <AppText muted>
@@ -257,24 +245,24 @@ export function DriverContent({ listOnly = false }: { listOnly?: boolean }) {
                 {nextStop && nextStop.stopOrder > 0 ? <AppText muted>Parada {String(nextStop.stopOrder).padStart(2, '0')}</AppText> : null}
               </View>
               <AppText variant="title" style={{ fontSize: 19 }}>
-                {nextStop?.stopName ?? (trip.students.length ? 'Embarques em dia' : 'Rota sem alunos')}
+                {nextStop?.stopName ?? (trip.students.length ? 'Sem paradas pendentes' : 'Rota sem alunos')}
               </AppText>
               <AppText muted>
                 {nextStop
                   ? nextStudent?.pendingReview ? 'Há um registro nesta parada aguardando revisão administrativa.' : nextStop.students.length === 1
-                    ? `${nextStudent?.name} aguarda confirmação de embarque nesta parada.`
-                    : `${nextStop.students.length} alunos aguardam confirmação de embarque nesta parada.`
+                    ? `${nextStudent?.name} aguarda confirmação de ${nextStudent?.checkedIn ? 'desembarque' : 'embarque'} nesta parada.`
+                    : `${nextStop.students.length} alunos com embarque ou desembarque nesta parada.`
                   : trip.students.length
-                    ? 'Não há alunos aguardando confirmação de embarque.'
+                    ? 'Não há embarques ou desembarques pendentes.'
                     : 'Nenhum aluno está vinculado a esta rota.'}
               </AppText>
               {nextStudent && !nextStudent.pendingReview ? (
                 <BoardingMethods
-                  callLabel={pendingId === nextStudent.id ? 'Aguarde…' : 'Chamada'}
-                  accessibilityLabel={`${pendingId === nextStudent.id ? 'Confirmando embarque de' : 'Validar embarque de'} ${nextStudent.name}`}
+                  callLabel={pendingId === nextStudent.id ? 'Aguarde…' : nextStudent.checkedIn ? 'Desembarcar' : 'Embarcar'}
+                  accessibilityLabel={`${nextStudent.checkedIn ? 'Desembarcar' : 'Embarcar'} ${nextStudent.name}`}
                   loading={pendingId === nextStudent.id}
                   disabled={pendingId !== null || Boolean(query.error) || feedback?.tone === 'error'}
-                  onCall={() => { void handleBoardingChange(nextStudent, true); }}
+                  onCall={() => { void handleBoardingChange(nextStudent, !nextStudent.checkedIn); }}
                   onNfc={() => setNfcOpen(true)}
                   onQr={() => setQrOpen(true)}
                 />

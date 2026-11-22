@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS `app_db`.`routes` (
   `name` VARCHAR(100) NOT NULL,
   `description` VARCHAR(255) NULL DEFAULT NULL,
   `shift` ENUM('morning', 'afternoon', 'evening') NOT NULL,
+  `direction` VARCHAR(16) NOT NULL DEFAULT 'to_school',
   `active` TINYINT NOT NULL DEFAULT TRUE,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`))
@@ -297,6 +298,8 @@ CREATE TABLE IF NOT EXISTS `app_db`.`route_passengers` (
   `route_id` INT NOT NULL,
   `passenger_id` INT NOT NULL,
   `stop_id` INT NULL DEFAULT NULL,
+  `dropoff_stop_id` INT NULL DEFAULT NULL,
+  FOREIGN KEY (`dropoff_stop_id`) REFERENCES `route_stops` (`id`),
   `active` TINYINT NOT NULL DEFAULT TRUE,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

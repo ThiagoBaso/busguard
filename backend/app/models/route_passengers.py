@@ -13,6 +13,7 @@ class RoutePassenger(Base):
     route_id: Mapped[int] = mapped_column(ForeignKey("routes.id"))
     passenger_id: Mapped[int] = mapped_column(ForeignKey("passengers.id"))
     stop_id: Mapped[int | None] = mapped_column(ForeignKey("route_stops.id", ondelete="SET NULL"), nullable=True)
+    dropoff_stop_id: Mapped[int | None] = mapped_column(ForeignKey("route_stops.id"), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

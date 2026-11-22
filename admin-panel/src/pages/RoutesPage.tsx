@@ -9,9 +9,9 @@ import type { AccessEvent, Address, LiveVehicleLocation, Passenger, Route, Route
 import type { ScreenProps } from '../pageTypes';
 
 type RoutesData = { routes: Route[]; stops: RouteStop[]; addresses: Address[]; passengers: Passenger[]; assignments: RoutePassenger[]; trips: Trip[]; events: AccessEvent[]; locations: LiveVehicleLocation[] };
-type RouteForm = { name: string; description: string; shift: RouteShift; active: boolean };
+type RouteForm = { name: string; description: string; shift: RouteShift; direction: Route['direction']; active: boolean };
 type AddressForm = { cep: string; rua: string; numero: string; bairro: string; cidade: string; estado: string; complemento: string; latitude: string; longitude: string };
-const initialRoute: RouteForm = { name: '', description: '', shift: 'morning', active: true };
+const initialRoute: RouteForm = { name: '', description: '', shift: 'morning', direction: 'to_school', active: true };
 const initialAddress: AddressForm = { cep: '', rua: '', numero: '', bairro: '', cidade: 'Marília', estado: 'SP', complemento: '', latitude: '', longitude: '' };
 
 function describeRouteChange(state: RouteChangePage['items'][number]['before'], type: 'passenger' | 'stop', passengers: Passenger[], addresses: Address[]) {
@@ -19,7 +19,7 @@ function describeRouteChange(state: RouteChangePage['items'][number]['before'], 
   const route = `Rota #${state.route_id}`;
   if (type === 'passenger') {
     const name = passengers.find(item => item.id === state.passenger_id)?.name || `Passageiro #${state.passenger_id}`;
-    return `${route} · ${name} · ${state.stop_id ? `Parada #${state.stop_id}` : 'Sem parada'} · ${state.active ? 'Ativo' : 'Inativo'}`;
+    return `${route} · ${name} · ${state.stop_id ? `Embarque #${state.stop_id}` : 'Sem embarque definido'} · ${state.dropoff_stop_id ? `Desembarque #${state.dropoff_stop_id}` : 'Desembarque no destino final'} · ${state.active ? 'Ativo' : 'Inativo'}`;
   }
   const address = addresses.find(item => item.id === state.address_id);
   return `${route} · ${address ? formatAddress(address) : `Endereço #${state.address_id}`} · Ordem ${state.sequence}`;
@@ -52,6 +52,7 @@ export function RoutesPage({ notify }: ScreenProps) {
   const [stopAddressId, setStopAddressId] = useState('');
   const [passengerId, setPassengerId] = useState('');
   const [passengerStopId, setPassengerStopId] = useState('');
+  const [dropoffId, setDropoffId] = useState('');
   const [coordinateAddress, setCoordinateAddress] = useState<Address | null>(null);
   const [coordinateForm, setCoordinateForm] = useState({ latitude: '', longitude: '' });
   const [busy, setBusy] = useState(false);
@@ -78,9 +79,16 @@ export function RoutesPage({ notify }: ScreenProps) {
   const stopsCount = data?.stops.length ?? 0;
   const passengerLinks = data?.assignments.filter((link) => link.active).length ?? 0;
 
+  function stopField(label: string, value: string, change: (value: string) => void) {
+    return <Field label={label}><SelectInput required disabled={Boolean(liveTrip) || busy} value={value} onChange={event => change(event.target.value)}>
+      <option value="" disabled>Selecionar parada</option>
+      {selectedStops.map(stop => <option key={stop.id} value={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}
+    </SelectInput></Field>;
+  }
+
   function openRouteForm(route?: Route) {
     setEditingRoute(route ?? null);
-    setRouteForm(route ? { name: route.name, description: route.description ?? '', shift: route.shift, active: route.active } : initialRoute);
+    setRouteForm(route ? { name: route.name, description: route.description ?? '', shift: route.shift, direction: route.direction, active: route.active } : initialRoute);
     setRouteModal(true);
   }
 
@@ -97,6 +105,20 @@ export function RoutesPage({ notify }: ScreenProps) {
       await query.reload();
       notify(editingRoute ? 'Rota atualizada.' : 'Rota cadastrada.');
     } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível salvar a rota.', 'error'); }
+    finally { setBusy(false); }
+  }
+
+  async function createReturn(route: Route) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await apiFetch<Route>(`/admin/routes/${route.id}/return-route`, { method: 'POST' });
+      await query.reload();
+      setSelectedId(result.id);
+      setPassengerId(''); setPassengerStopId(''); setDropoffId('');
+      openRouteForm(result);
+      notify('Volta criada. Confira o nome e o turno.');
+    } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível criar a volta.', 'error'); }
     finally { setBusy(false); }
   }
 
@@ -156,13 +178,15 @@ export function RoutesPage({ notify }: ScreenProps) {
     try {
       const existingLink = (data?.assignments ?? []).find((link) => link.route_id === selected.id && link.passenger_id === Number(passengerId));
       const stop_id = passengerStopId ? Number(passengerStopId) : null;
+      const dropoff_stop_id = Number(dropoffId);
+      if (!stop_id || !dropoff_stop_id) throw new Error('Selecione os dois pontos do passageiro.');
       if (existingLink) {
-        await apiFetch(`/admin/route-passengers/${existingLink.id}`, { method: 'PUT', body: JSON.stringify({ active: true, stop_id }) });
+        await apiFetch(`/admin/route-passengers/${existingLink.id}`, { method: 'PUT', body: JSON.stringify({ active: true, stop_id, dropoff_stop_id }) });
       } else {
-        await apiFetch('/admin/route-passengers', { method: 'POST', body: JSON.stringify({ route_id: selected.id, passenger_id: Number(passengerId), stop_id, active: true }) });
+        await apiFetch('/admin/route-passengers', { method: 'POST', body: JSON.stringify({ route_id: selected.id, passenger_id: Number(passengerId), stop_id, dropoff_stop_id, active: true }) });
       }
       setPassengerId('');
-      setPassengerStopId('');
+      setPassengerStopId(''); setDropoffId('');
       await query.reload();
       notify('Passageiro associado à rota.');
     } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível associar o passageiro.', 'error'); }
@@ -178,9 +202,9 @@ export function RoutesPage({ notify }: ScreenProps) {
     } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível remover o passageiro.', 'error'); }
   }
 
-  async function changePassengerStop(link: RoutePassenger, stopId: string) {
+  async function changePassengerStop(link: RoutePassenger, field: 'stop_id' | 'dropoff_stop_id', stopId: string) {
     try {
-      await apiFetch(`/admin/route-passengers/${link.id}`, { method: 'PUT', body: JSON.stringify({ stop_id: stopId ? Number(stopId) : null }) });
+      await apiFetch(`/admin/route-passengers/${link.id}`, { method: 'PUT', body: JSON.stringify({ [field]: stopId ? Number(stopId) : null }) });
       await query.reload();
       notify('Parada do passageiro atualizada.');
     } catch (error) { notify(error instanceof Error ? error.message : 'Não foi possível alterar a parada.', 'error'); }
@@ -238,12 +262,13 @@ export function RoutesPage({ notify }: ScreenProps) {
             {routes.length ? <div className="route-list">{routes.map((route) => {
               const stops = data.stops.filter((stop) => stop.route_id === route.id).length;
               return <div className={`route-list-row ${selected?.id === route.id ? 'route-list-row-active' : ''}`} key={route.id}>
-                <button className="route-select" type="button" onClick={() => setSelectedId(route.id)}><strong>{route.name}</strong><small>{routeShiftLabel(route.shift)} · {stops} {stops === 1 ? 'parada' : 'paradas'} · {route.active ? 'Ativa' : 'Inativa'}</small></button>
+                <button className="route-select" type="button" onClick={() => { setSelectedId(route.id); setPassengerId(''); setPassengerStopId(''); setDropoffId(''); }}><strong>{route.name}</strong><small>{routeShiftLabel(route.shift)} · {route.direction === 'from_school' ? 'Volta para casa' : 'Ida à escola'} · {stops} {stops === 1 ? 'parada' : 'paradas'} · {route.active ? 'Ativa' : 'Inativa'}</small></button>
                 <div className="action-cell"><Button variant="quiet" onClick={() => openRouteForm(route)}>Editar</Button><Button variant="danger" onClick={() => void removeRoute(route)}>Excluir</Button></div>
               </div>;
             })}</div> : <EmptyState title="Nenhuma rota cadastrada" message="Crie uma rota para organizar as paradas e passageiros." action={<Button onClick={() => openRouteForm()}>Cadastrar rota</Button>} />}
           </Panel>
           <Panel title="Mapa da rota selecionada" action={selected ? <div className="route-heading-actions"><Pill tone="warning">{selected.name}</Pill><Button variant="plain" onClick={() => { setHistoryPage(1); setHistoryRoute(selected); }}>Histórico de alterações</Button></div> : undefined}>
+            {selected?.direction === 'to_school' && <Button disabled={busy || selectedStops.length < 2} onClick={() => void createReturn(selected)}>Criar rota de volta</Button>}
             {selected ? <RouteMap routeId={selected.id} stops={selectedStops} addresses={data.addresses} assignments={selectedPassengerLinks} passengers={data.passengers} completedStopIds={completedStops} activeTripId={liveTrip?.id ?? null} locationUpdatedAt={liveLocation?.recorded_at ?? null} /> : <EmptyState title="Selecione uma rota" message="O trajeto e as paradas aparecerão aqui." />}
           </Panel>
         </div>
@@ -253,14 +278,33 @@ export function RoutesPage({ notify }: ScreenProps) {
             {liveTrip ? <p className="panel-hint">Paradas e passageiros podem ser alterados após o encerramento das viagens em andamento nesta rota.</p> : null}
             {selected ? selectedStops.length ? <div className="stop-list">{selectedStops.map((stop, index) => {
               const address = addressById.get(stop.address_id);
-              const linked = selectedPassengerLinks.filter((link) => link.stop_id === stop.id).length;
-              return <div className="stop-row" key={stop.id}><span className="stop-number">{String(stop.sequence).padStart(2, '0')}</span><div><strong>{formatAddress(address)}</strong><small>{linked} aluno(s) · {address?.latitude == null || address.longitude == null ? 'sem coordenadas' : address.coordinate_source === 'demo' ? 'posição simulada' : 'posição informada'}</small></div><div className="stop-actions"><Button variant="quiet" aria-label={`Subir parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === 0} onClick={() => void moveStop(index, -1)}>↑</Button><Button variant="quiet" aria-label={`Descer parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === selectedStops.length - 1} onClick={() => void moveStop(index, 1)}>↓</Button>{address ? <Button variant="quiet" disabled={Boolean(liveTrip)} onClick={() => editCoordinates(address)}>Localizar</Button> : null}<Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removeStop(stop)}>Remover</Button></div></div>;
+              const pickups = selectedPassengerLinks.filter(link => link.stop_id === stop.id).length;
+              const dropoffs = selectedPassengerLinks.filter(link => (link.dropoff_stop_id ?? selectedStops.at(-1)?.id) === stop.id).length;
+              return <div className="stop-row" key={stop.id}><span className="stop-number">{String(stop.sequence).padStart(2, '0')}</span><div><strong>{formatAddress(address)}</strong><small>{index === selectedStops.length - 1 ? 'Destino final · ' : ''}{pickups} embarques · {dropoffs} desembarques · {address?.latitude == null || address.longitude == null ? 'sem coordenadas' : address.coordinate_source === 'demo' ? 'posição simulada' : 'posição informada'}</small></div><div className="stop-actions"><Button variant="quiet" aria-label={`Subir parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === 0} onClick={() => void moveStop(index, -1)}>↑</Button><Button variant="quiet" aria-label={`Descer parada ${stop.sequence}`} disabled={busy || Boolean(liveTrip) || index === selectedStops.length - 1} onClick={() => void moveStop(index, 1)}>↓</Button>{address ? <Button variant="quiet" disabled={Boolean(liveTrip)} onClick={() => editCoordinates(address)}>Localizar</Button> : null}<Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removeStop(stop)}>Remover</Button></div></div>;
             })}</div> : <EmptyState title="Rota sem paradas" message="Adicione endereços para registrar os pontos de passagem." action={<Button disabled={Boolean(liveTrip)} onClick={() => setStopModal(true)}>Adicionar parada</Button>} /> : <EmptyState title="Nenhuma rota selecionada" message="Cadastre uma rota para configurar as paradas." />}
           </Panel>
           <Panel title="Passageiros vinculados" subtitle={selected ? `${selectedPassengerLinks.length} alunos associados a esta rota` : 'Selecione uma rota'}>
             {selected ? <>
-              {liveTrip ? <p className="panel-hint">Os vínculos ficam disponíveis para alteração após o encerramento da viagem.</p> : eligiblePassengers.length ? <form className="route-passenger-form" onSubmit={(event) => void addPassenger(event)}><SelectInput value={passengerId} onChange={(event) => { const value = event.target.value; setPassengerId(value); const passenger = data.passengers.find((item) => item.id === Number(value)); setPassengerStopId(String(selectedStops.find((stop) => stop.address_id === passenger?.addresses_id)?.id ?? '')); }} required><option value="">Selecionar passageiro</option>{eligiblePassengers.map((passenger) => <option value={passenger.id} key={passenger.id}>{passenger.name}</option>)}</SelectInput><SelectInput aria-label="Parada de embarque" value={passengerStopId} onChange={(event) => setPassengerStopId(event.target.value)}><option value="">Sem parada definida</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button type="submit" loading={busy}>Associar</Button></form> : <p className="panel-hint">Todos os passageiros disponíveis já estão associados.</p>}
-              {selectedPassengerLinks.length ? <div className="assigned-list">{selectedPassengerLinks.map((link) => { const passenger = data.passengers.find((item) => item.id === link.passenger_id); return <div key={link.id}><span>{passenger?.name || `Passageiro ${link.passenger_id}`}</span><SelectInput disabled={Boolean(liveTrip)} aria-label={`Parada de ${passenger?.name || link.passenger_id}`} value={link.stop_id ?? ''} onChange={(event) => void changePassengerStop(link, event.target.value)}><option value="">Sem parada</option>{selectedStops.map((stop) => <option value={stop.id} key={stop.id}>{stop.sequence} · {formatAddress(addressById.get(stop.address_id))}</option>)}</SelectInput><Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removePassenger(link.id)}>Remover</Button></div>; })}</div> : <small className="muted-copy">Ainda não há passageiros vinculados.</small>}
+              {liveTrip ? <p className="panel-hint">Os vínculos ficam disponíveis para alteração após o encerramento da viagem.</p> : eligiblePassengers.length ? <form className="route-passenger-form" onSubmit={event => void addPassenger(event)}>
+                <Field label="Passageiro"><SelectInput value={passengerId} required onChange={event => {
+                  const id = event.target.value;
+                  setPassengerId(id);
+                  const passenger = data.passengers.find(person => person.id === Number(id));
+                  const home = selectedStops.find(stop => stop.address_id === passenger?.addresses_id);
+                  const returning = selected.direction === 'from_school';
+                  setPassengerStopId(String((returning ? selectedStops[0] : home)?.id ?? ''));
+                  setDropoffId(String((returning ? home : selectedStops.at(-1))?.id ?? ''));
+                }}><option value="">Selecionar passageiro</option>{eligiblePassengers.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</SelectInput></Field>
+                {stopField('Embarque', passengerStopId, setPassengerStopId)}
+                {stopField('Desembarque', dropoffId, setDropoffId)}
+                <Button type="submit" loading={busy}>Associar</Button>
+              </form> : <p className="panel-hint">Todos os passageiros disponíveis já estão associados.</p>}
+              {selectedPassengerLinks.length ? <div className="assigned-list">{selectedPassengerLinks.map(link => <div key={link.id}>
+                <span>{data.passengers.find(person => person.id === link.passenger_id)?.name}</span>
+                {stopField('Embarque', String(link.stop_id ?? ''), value => void changePassengerStop(link, 'stop_id', value))}
+                {stopField('Desembarque', String(link.dropoff_stop_id ?? (selected.direction === 'to_school' ? selectedStops.at(-1)?.id : '') ?? ''), value => void changePassengerStop(link, 'dropoff_stop_id', value))}
+                <Button variant="danger" disabled={Boolean(liveTrip)} onClick={() => void removePassenger(link.id)}>Remover</Button>
+              </div>)}</div> : <small className="muted-copy">Ainda não há passageiros vinculados.</small>}
             </> : <EmptyState title="Selecione uma rota" message="Os passageiros vinculados aparecerão aqui." />}
           </Panel>
         </div>
@@ -269,6 +313,7 @@ export function RoutesPage({ notify }: ScreenProps) {
       {routeModal ? <Modal title={editingRoute ? 'Editar rota' : 'Cadastrar rota'} eyebrow={editingRoute ? `ROTA #${editingRoute.id}` : 'NOVO TRAJETO'} onClose={() => setRouteModal(false)} onSubmit={(event) => void saveRoute(event)} submitLabel="Salvar rota" busy={busy}>
         <div className="form-grid">
           <Field label="Nome da rota" className="field-span-two"><TextInput value={routeForm.name} onChange={(event) => setRouteForm({ ...routeForm, name: event.target.value })} maxLength={100} placeholder="Rota da Manhã - UNIMAR" required /></Field>
+          <Field label="Sentido"><SelectInput value={routeForm.direction} onChange={event => setRouteForm({ ...routeForm, direction: event.target.value as Route['direction'] })}><option value="to_school">Ida à escola</option><option value="from_school">Volta para casa</option></SelectInput></Field>
           <Field label="Turno"><SelectInput value={routeForm.shift} onChange={(event) => setRouteForm({ ...routeForm, shift: event.target.value as RouteShift })}><option value="morning">Manhã</option><option value="afternoon">Tarde</option><option value="evening">Noite</option></SelectInput></Field>
           <Field label="Situação"><SelectInput value={routeForm.active ? 'true' : 'false'} onChange={(event) => setRouteForm({ ...routeForm, active: event.target.value === 'true' })}><option value="true">Ativa</option><option value="false">Inativa</option></SelectInput></Field>
           <Field label="Descrição" className="field-span-two"><TextInput value={routeForm.description} onChange={(event) => setRouteForm({ ...routeForm, description: event.target.value })} maxLength={255} placeholder="Escola ou informação de referência" /></Field>

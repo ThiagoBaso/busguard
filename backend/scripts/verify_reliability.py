@@ -59,7 +59,7 @@ def main():
         child_env['DATABASE_URL'] = f'mysql+pymysql://root:{PASSWORD}@127.0.0.1:{port}/app_db?charset=utf8mb4'
         child_env['JWT_SECRET_KEY'] = 'temporary-secret-for-isolated-tests-only'
         child_env.pop('BUSGUARD_TEST_MYSQL_URL', None)
-        for module in ('migrate_access_events_v1', 'migrate_trip_manifests_v2', 'migrate_trip_manifests_v2'):
+        for module in ('migrate_access_events_v1', 'migrate_trip_manifests_v2', 'migrate_trip_manifests_v2', 'migrate_route_endpoints', 'migrate_route_endpoints'):
             run([sys.executable, '-B', '-m', f'app.scripts.{module}'], env=child_env)
         if mysql(counts_sql, 'app_db') != before:
             raise RuntimeError('A migração alterou a contagem de registros.')

@@ -69,7 +69,7 @@ export function RouteMap({ routeId, stops, addresses, assignments, passengers, c
     setNextRoute(null);
     if (!activeTripId || !locationUpdatedAt) return;
     const controller = new AbortController();
-    void apiFetch<NextStopRoute>(`/admin/trips/${activeTripId}/next-stop-geometry`, { signal: controller.signal })
+    void apiFetch<NextStopRoute | null>(`/admin/trips/${activeTripId}/next-stop-geometry`, { signal: controller.signal })
       .then((geometry) => { if (!controller.signal.aborted) setNextRoute(geometry); })
       .catch(() => { if (!controller.signal.aborted) setNextRoute(null); });
     return () => controller.abort();
@@ -82,11 +82,11 @@ export function RouteMap({ routeId, stops, addresses, assignments, passengers, c
       {points.length > 1 && missing === 0 ? <Polyline positions={planned.geometry?.coordinates ?? points} pathOptions={{ color: '#b78900', weight: 4, dashArray: planned.geometry ? undefined : '7 8' }} /> : null}
       {nextRoute ? <Pane name="navigation-route-pane" style={{ zIndex: 350 }}><Polyline positions={nextRoute.coordinates} pathOptions={{ color: '#1677d2', weight: 5, dashArray: nextRoute.routed ? undefined : '7 8' }} /></Pane> : null}
       {planned.located.map(({ stop, address, position }) => {
-        const names = assignments.filter((link) => link.active && link.stop_id === stop.id).map((link) => passengers.find((passenger) => passenger.id === link.passenger_id)?.name).filter(Boolean);
+        const names = assignments.filter((link) => link.active && (link.stop_id === stop.id || (link.dropoff_stop_id ?? stops.at(-1)?.id) === stop.id)).map((link) => passengers.find((passenger) => passenger.id === link.passenger_id)?.name).filter(Boolean);
         const completed = completedStopIds.has(stop.id);
         return <CircleMarker key={stop.id} center={position} radius={13} pathOptions={{ color: completed ? '#15803d' : '#795900', fillColor: completed ? '#22c55e' : '#ffc629', fillOpacity: 1 }}>
           <Tooltip permanent direction="center" className="route-marker-label">{stop.sequence}</Tooltip>
-          <Popup><strong>Parada {stop.sequence}{completed ? ' · concluída' : ''}</strong><br />{formatAddress(address)}<br />{address.coordinate_source === 'demo' ? 'Coordenada simulada' : 'Coordenada informada'}{names.length ? <><br />{names.join(', ')}</> : null}</Popup>
+          <Popup><strong>{stop.id === stops.at(-1)?.id ? 'Destino final' : 'Parada'} {stop.sequence}{completed ? ' · concluída' : ''}</strong><br />{formatAddress(address)}<br />{address.coordinate_source === 'demo' ? 'Coordenada simulada' : 'Coordenada informada'}{names.length ? <><br />{names.join(', ')}</> : null}</Popup>
         </CircleMarker>;
       })}
       {livePosition ? <CircleMarker center={livePosition} radius={9} pathOptions={{ color: '#fff', weight: 3, fillColor: '#1677d2', fillOpacity: 1 }}><Popup>Posição atual do veículo</Popup></CircleMarker> : null}

@@ -13,6 +13,7 @@ class Route(Base):
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     shift: Mapped[str] = mapped_column(String(20))
+    direction: Mapped[str] = mapped_column(String(16), default='to_school', server_default='to_school')
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
