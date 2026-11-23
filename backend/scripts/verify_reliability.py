@@ -29,6 +29,61 @@ def mysql(sql, database=None):
     return run(command, input_bytes=sql.encode('utf-8'), capture=True).decode('utf-8').strip()
 
 
+def load_fixture():
+    run(['docker', 'exec', '-i', '-e', f'MYSQL_PWD={PASSWORD}', NAME, 'mysql', '-u', 'root',
+         '--default-character-set=utf8mb4'], input_bytes=(ROOT / 'database' / 'init.sql').read_bytes(), capture=True)
+
+
+def verify_credential_reload():
+    """Confere a recarga somente no app_db do contêiner descartável criado aqui."""
+    expected_tokens = (
+        ('nfc_credentials', '80000000167', 'busguard:nfc:v1:b35df68203bf4988a62fb054be610261'),
+        ('qr_credentials', '80000000167', 'busguard:qr:v1:d2fe7089c5ad4b7d865592bc102a46f3'),
+        ('qr_credentials', '80000000329', 'busguard:qr:v1:a0973b6fe3a14411b34df671ec92d205'),
+    )
+    for table, cpf, token in expected_tokens:
+        count = mysql(f"SELECT COUNT(*) FROM {table} c JOIN passengers p ON p.id=c.passenger_id "
+                      f"WHERE p.cpf='{cpf}' AND c.status='active' AND c.token_hash=SHA2('{token}',256);", 'app_db')
+        if count != '1':
+            raise RuntimeError(f'Credencial fixa de demonstração incorreta: {table}, CPF {cpf}.')
+
+    mysql("UPDATE nfc_credentials SET status='revoked', revoked_at='2026-01-01 00:00:00'; "
+          "UPDATE qr_credentials SET status='pending', activated_at=NULL WHERE passenger_id=1; "
+          "DELETE FROM access_events WHERE passenger_id=2; "
+          "DELETE FROM passengers_responsibles WHERE passengers_id=2; "
+          "DELETE FROM route_passengers WHERE passenger_id=2; "
+          "UPDATE passengers SET id=1002 WHERE id=2; "
+          "UPDATE passengers SET cpf='90000000009' WHERE id=4; "
+          "UPDATE users SET cpf='99000000009' WHERE id=1;", 'app_db')
+    for table, rows in (
+        ('nfc_credentials', [(1002, 'active'), (3, 'pending'), (4, 'active')]),
+        ('qr_credentials', [(1002, 'revoked'), (4, 'active')]),
+    ):
+        for passenger_id, status in rows:
+            activated_at = 'NULL' if status == 'pending' else "'2026-01-01 00:01:00'"
+            revoked_at = "'2026-01-01 00:02:00'" if status == 'revoked' else 'NULL'
+            mysql(f"INSERT INTO {table} (passenger_id,token_hash,status,created_by,created_at,activated_at,revoked_at) "
+                  f"VALUES ({passenger_id},SHA2('{table}-{passenger_id}',256),'{status}',1,'2026-01-01 00:00:00',"
+                  f"{activated_at},{revoked_at});", 'app_db')
+
+    def credential_state():
+        return [mysql(f"SELECT c.id,p.cpf,c.token_hash,c.status,c.created_at,c.activated_at,c.revoked_at "
+                      f"FROM {table} c JOIN passengers p ON p.id=c.passenger_id "
+                      "WHERE p.cpf <> '90000000009' ORDER BY c.id;", 'app_db')
+                for table in ('nfc_credentials', 'qr_credentials')]
+
+    before = credential_state()
+    for _ in range(2):
+        load_fixture()
+        if credential_state() != before:
+            raise RuntimeError('A recarga alterou ou reativou credenciais NFC/QR existentes.')
+        for table in ('nfc_credentials', 'qr_credentials'):
+            if mysql(f'SELECT COUNT(*) FROM {table} WHERE passenger_id=4 OR created_by IS NOT NULL;', 'app_db') != '0':
+                raise RuntimeError('A recarga reutilizou o ID de um passageiro ou autor diferente.')
+            if mysql(f'SELECT COUNT(*) FROM {table} WHERE passenger_id=2;', 'app_db') != '1':
+                raise RuntimeError('A recarga não reconstruiu o vínculo da credencial pelo CPF.')
+
+
 def main():
     started = False
     try:
@@ -49,17 +104,23 @@ def main():
         port_output = run(['docker', 'port', NAME, '3306/tcp'], capture=True).decode().strip().splitlines()[0]
         port = int(port_output.rsplit(':', 1)[1])
         print('Carregando dados fictícios e verificando migrações...', flush=True)
-        run(['docker', 'exec', '-i', '-e', f'MYSQL_PWD={PASSWORD}', NAME, 'mysql', '-u', 'root',
-             '--default-character-set=utf8mb4'], input_bytes=(ROOT / 'database' / 'init.sql').read_bytes(), capture=True)
+        load_fixture()
+        print('Verificando NFC/QR fixos e preservação em duas recargas...', flush=True)
+        verify_credential_reload()
         counts_sql = ("SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, passenger_id, vehicle_id, action, created_at))),0) FROM access_events; "
                       "SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, name, cpf))),0) FROM passengers; "
-                      "SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, route_id, vehicle_id, driver_id, status))),0) FROM trips;")
+                      "SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, route_id, vehicle_id, driver_id, status))),0) FROM trips; "
+                      "SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, passenger_id, token_hash, status))),0) FROM nfc_credentials; "
+                      "SELECT COUNT(*), COALESCE(SUM(CRC32(CONCAT_WS('|', id, passenger_id, token_hash, status))),0) FROM qr_credentials;")
         before = mysql(counts_sql, 'app_db')
         child_env = os.environ.copy()
         child_env['DATABASE_URL'] = f'mysql+pymysql://root:{PASSWORD}@127.0.0.1:{port}/app_db?charset=utf8mb4'
         child_env['JWT_SECRET_KEY'] = 'temporary-secret-for-isolated-tests-only'
         child_env.pop('BUSGUARD_TEST_MYSQL_URL', None)
-        for module in ('migrate_access_events_v1', 'migrate_trip_manifests_v2', 'migrate_trip_manifests_v2', 'migrate_route_endpoints', 'migrate_route_endpoints'):
+        for module in ('migrate_access_events_v1', 'migrate_trip_manifests_v2', 'migrate_trip_manifests_v2',
+                       'migrate_nfc_credentials_v1', 'migrate_nfc_credentials_v1',
+                       'migrate_qr_credentials_v1', 'migrate_qr_credentials_v1',
+                       'migrate_route_endpoints', 'migrate_route_endpoints'):
             run([sys.executable, '-B', '-m', f'app.scripts.{module}'], env=child_env)
         if mysql(counts_sql, 'app_db') != before:
             raise RuntimeError('A migração alterou a contagem de registros.')

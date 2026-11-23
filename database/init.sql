@@ -1,5 +1,6 @@
 -- BusGuard: esquema, migrações e dados fictícios para demonstração em Marília/SP.
--- A execução substitui os registros de app_db. Não utilize com dados que precise preservar.
+-- A execução substitui os registros de app_db, preservando NFC/QR dos mesmos CPFs.
+-- Não utilize com outros dados que precise preservar.
 -- As coordenadas, pessoas, documentos, endereços e eventos são dados de apresentação.
 SET NAMES utf8mb4;
 
@@ -497,10 +498,55 @@ PREPARE route_stop_fk_statement FROM @route_stop_fk_migration;
 EXECUTE route_stop_fk_statement;
 DEALLOCATE PREPARE route_stop_fk_statement;
 
+-- Credenciais compatíveis com as migrações aditivas da API.
+CREATE TABLE IF NOT EXISTS `nfc_credentials` (
+  `id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `passenger_id` INT NOT NULL,
+  `token_hash` VARCHAR(64) NOT NULL UNIQUE,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+  `created_by` INT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `activated_at` DATETIME NULL,
+  `revoked_at` DATETIME NULL,
+  INDEX `ix_nfc_credentials_passenger_id` (`passenger_id`),
+  FOREIGN KEY (`passenger_id`) REFERENCES `passengers` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `qr_credentials` (
+  `id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `passenger_id` INT NOT NULL,
+  `token_hash` VARCHAR(64) NOT NULL UNIQUE,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+  `created_by` INT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `activated_at` DATETIME NULL,
+  `revoked_at` DATETIME NULL,
+  INDEX `ix_qr_credentials_passenger_id` (`passenger_id`),
+  FOREIGN KEY (`passenger_id`) REFERENCES `passengers` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 -- Substituição transacional dos dados de demonstração.
 
 START TRANSACTION;
 
+-- A cópia dura apenas nesta conexão. O CPF evita vincular uma tag ao novo dono
+-- de um ID reutilizado; status e datas preservam substituições e revogações.
+CREATE TEMPORARY TABLE `saved_nfc_credentials` AS
+SELECT c.*, p.cpf AS passenger_cpf, u.cpf AS creator_cpf
+FROM `nfc_credentials` c
+JOIN `passengers` p ON p.id = c.passenger_id
+LEFT JOIN `users` u ON u.id = c.created_by;
+
+CREATE TEMPORARY TABLE `saved_qr_credentials` AS
+SELECT c.*, p.cpf AS passenger_cpf, u.cpf AS creator_cpf
+FROM `qr_credentials` c
+JOIN `passengers` p ON p.id = c.passenger_id
+LEFT JOIN `users` u ON u.id = c.created_by;
+
+DELETE FROM `nfc_credentials`;
+DELETE FROM `qr_credentials`;
 DELETE FROM `vehicle_locations`;
 DELETE FROM `access_events`;
 DELETE FROM `route_passengers`;
@@ -1922,7 +1968,44 @@ INSERT INTO `vehicle_locations` (`id`, `trip_id`, `latitude`, `longitude`, `spee
 (11, 4, -22.225891, -49.954220, 29, 'demo', DATE_SUB(NOW(), INTERVAL 9 MINUTE)),
 (12, 4, -22.223571, -49.953198, 33, 'demo', DATE_SUB(NOW(), INTERVAL 6 MINUTE));
 
+INSERT INTO `nfc_credentials`
+  (`id`, `passenger_id`, `token_hash`, `status`, `created_by`, `created_at`, `activated_at`, `revoked_at`)
+SELECT c.id, p.id, c.token_hash, c.status, u.id, c.created_at, c.activated_at, c.revoked_at
+FROM `saved_nfc_credentials` c
+JOIN `passengers` p ON p.cpf = c.passenger_cpf
+LEFT JOIN `users` u ON u.cpf = c.creator_cpf;
+
+INSERT INTO `qr_credentials`
+  (`id`, `passenger_id`, `token_hash`, `status`, `created_by`, `created_at`, `activated_at`, `revoked_at`)
+SELECT c.id, p.id, c.token_hash, c.status, u.id, c.created_at, c.activated_at, c.revoked_at
+FROM `saved_qr_credentials` c
+JOIN `passengers` p ON p.cpf = c.passenger_cpf
+LEFT JOIN `users` u ON u.cpf = c.creator_cpf;
+
+-- Códigos públicos apenas para os alunos indicados na demonstração.
+-- Um histórico existente, inclusive revogado, nunca é substituído ou reativado.
+INSERT INTO `nfc_credentials` (`passenger_id`, `token_hash`, `status`, `activated_at`)
+SELECT p.id, SHA2('busguard:nfc:v1:b35df68203bf4988a62fb054be610261', 256), 'active', UTC_TIMESTAMP()
+FROM `passengers` p
+WHERE p.cpf = '80000000167' AND p.name = 'Lucas Fernandes'
+  AND NOT EXISTS (SELECT 1 FROM `nfc_credentials` c WHERE c.passenger_id = p.id);
+
+INSERT INTO `qr_credentials` (`passenger_id`, `token_hash`, `status`, `activated_at`)
+SELECT p.id, SHA2('busguard:qr:v1:d2fe7089c5ad4b7d865592bc102a46f3', 256), 'active', UTC_TIMESTAMP()
+FROM `passengers` p
+WHERE p.cpf = '80000000167' AND p.name = 'Lucas Fernandes'
+  AND NOT EXISTS (SELECT 1 FROM `qr_credentials` c WHERE c.passenger_id = p.id);
+
+INSERT INTO `qr_credentials` (`passenger_id`, `token_hash`, `status`, `activated_at`)
+SELECT p.id, SHA2('busguard:qr:v1:a0973b6fe3a14411b34df671ec92d205', 256), 'active', UTC_TIMESTAMP()
+FROM `passengers` p
+WHERE p.cpf = '80000000329' AND p.name = 'Rafael Fernandes'
+  AND NOT EXISTS (SELECT 1 FROM `qr_credentials` c WHERE c.passenger_id = p.id);
+
 COMMIT;
+
+DROP TEMPORARY TABLE `saved_nfc_credentials`;
+DROP TEMPORARY TABLE `saved_qr_credentials`;
 
 -- Garante que o identificador usado pelos vínculos seja único em volumes antigos.
 SET @responsible_id_unique_exists = (

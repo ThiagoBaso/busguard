@@ -38,7 +38,7 @@ A credencial NFC também requer a migração aditiva `python -m app.scripts.migr
 
 As viagens iniciadas depois da migração guardam seus vínculos de motorista, supervisor e passageiros, incluindo o identificador e a ordem da parada. Durante uma viagem, alterações nos passageiros ou nas paradas da rota ficam bloqueadas até o encerramento. O painel também apresenta o histórico de alterações posteriores em passageiros e paradas, com autor e dados anteriores e posteriores. Viagens e alterações anteriores não recebem históricos presumidos; o manifesto não é uma cópia histórica dos endereços ou das coordenadas.
 
-Para recarregar a fixture manualmente, execute `docker compose down` e depois `docker compose up -d --build`. Sem a opção `-v`, o volume do MySQL permanece; os registros de `app_db` são substituídos na próxima inicialização.
+Para recarregar a fixture manualmente, execute `docker compose down` e depois `docker compose up -d --build`. Sem a opção `-v`, o volume do MySQL permanece; os registros de `app_db` são substituídos na próxima inicialização. As credenciais NFC e QR são preservadas para passageiros cujo CPF continua na fixture, incluindo estados pendentes e desativados. Credenciais de passageiros que não existem na nova carga são descartadas.
 
 ### Aplicativo
 
@@ -87,6 +87,8 @@ No painel, acesse **Passageiros → Editar → QR Code**, gere o código, baixe 
 
 No aplicativo Android de desenvolvimento, toque em **QR** na chamada, permita a câmera, leia o código e confirme embarque ou desembarque. A leitura exige conexão e viagem ativa autorizada. Como um QR pode ser copiado, desative-o em caso de perda e confira a identidade antes de confirmar. O módulo de câmera exige uma nova compilação Android; o aplicativo instalado anteriormente não o contém.
 
+Na demonstração, Lucas Fernandes recebe NFC e QR fixos, e Rafael Fernandes recebe um QR próprio. Os arquivos para impressão e o conteúdo para gravar a tag estão em [credenciais de demonstração](docs/credenciais_demo.md). Para adicioná-los a uma base existente, sem recarregar os demais dados, execute `docker compose exec api python -m app.scripts.seed_demo_credentials`. O comando preserva qualquer histórico de credenciais já existente para esses alunos, inclusive desativadas; nesse caso, continue usando os códigos cadastrados. Códigos públicos da demonstração não devem ser usados com dados reais.
+
 ### Mensagens
 
 Motoristas e responsáveis acessam **Mensagens** no aplicativo; a administração acessa a seção correspondente no painel. Conversas são individuais: a API permite leitura e envio somente aos dois participantes, inclusive quando o usuário é administrador. Os contatos entre motorista e responsável são oferecidos quando há passageiro vinculado a uma rota com viagem programada ou em andamento daquele motorista. A conversa permanece no histórico dos participantes.
@@ -120,6 +122,6 @@ O mapa usa tiles públicos do OpenStreetMap por padrão; o provedor recebe requi
 
 ## Dados e ambiente
 
-O formulário de login móvel preenche credenciais de demonstração em desenvolvimento. O motorista de demonstração usa `joao.pereira@transportescolar.com` / `Busguard@123`; o responsável usa `maria.fernandes@email.com` / `Busguard@123`. **Atenção:** iniciar o serviço `megamock` substitui os registros de `app_db` pelos dados fictícios, inclusive dados inseridos manualmente. A carga também acontece em volumes MySQL existentes; o volume não é removido. Repetir `docker compose up` sem reiniciar o serviço não recarrega os dados.
+O formulário de login móvel preenche credenciais de demonstração em desenvolvimento. O motorista de demonstração usa `joao.pereira@transportescolar.com` / `Busguard@123`; o responsável usa `maria.fernandes@email.com` / `Busguard@123`. **Atenção:** iniciar o serviço `megamock` substitui os registros de `app_db` pelos dados fictícios, inclusive dados inseridos manualmente. A exceção são as credenciais NFC/QR dos passageiros cujo CPF continua na fixture, que são preservadas. A carga também acontece em volumes MySQL existentes; o volume não é removido. Repetir `docker compose up` sem reiniciar o serviço não recarrega os dados.
 
 Consulte [project.md](project.md) para detalhes de configuração, verificações e limites atuais.
