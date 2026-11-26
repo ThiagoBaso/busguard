@@ -84,6 +84,22 @@ def verify_credential_reload():
                 raise RuntimeError('A recarga não reconstruiu o vínculo da credencial pelo CPF.')
 
 
+def verify_chat_reload():
+    """Reproduz a recarga com conversas e mensagens vinculadas aos usuários."""
+    user_count = mysql('SELECT COUNT(*) FROM users;', 'app_db')
+    for _ in range(2):
+        mysql("INSERT INTO chat_conversations (user_a_id, user_b_id) VALUES (1, 2); "
+              "SET @conversation_id = LAST_INSERT_ID(); "
+              "INSERT INTO chat_messages (conversation_id, sender_id, client_id, body) "
+              "VALUES (@conversation_id, 1, 'fixture-reload-test', 'Mensagem fictícia de teste');", 'app_db')
+        load_fixture()
+        for table in ('chat_messages', 'chat_conversations'):
+            if mysql(f'SELECT COUNT(*) FROM {table};', 'app_db') != '0':
+                raise RuntimeError(f'A recarga preservou histórico de chat de usuários substituídos: {table}.')
+        if mysql('SELECT COUNT(*) FROM users;', 'app_db') != user_count:
+            raise RuntimeError('A recarga com chat não restaurou os usuários de demonstração.')
+
+
 def main():
     started = False
     try:
@@ -120,10 +136,15 @@ def main():
         for module in ('migrate_access_events_v1', 'migrate_trip_manifests_v2', 'migrate_trip_manifests_v2',
                        'migrate_nfc_credentials_v1', 'migrate_nfc_credentials_v1',
                        'migrate_qr_credentials_v1', 'migrate_qr_credentials_v1',
+                       'migrate_chat_v1', 'migrate_chat_v1',
                        'migrate_route_endpoints', 'migrate_route_endpoints'):
             run([sys.executable, '-B', '-m', f'app.scripts.{module}'], env=child_env)
         if mysql(counts_sql, 'app_db') != before:
             raise RuntimeError('A migração alterou a contagem de registros.')
+
+        print('Verificando duas recargas com conversas e mensagens existentes...', flush=True)
+        verify_chat_reload()
+        before = mysql(counts_sql, 'app_db')
 
         print('Restaurando backup fictício em outro banco descartável...', flush=True)
         backup = run(['docker', 'exec', '-e', f'MYSQL_PWD={PASSWORD}', NAME, 'mysqldump', '-u', 'root',

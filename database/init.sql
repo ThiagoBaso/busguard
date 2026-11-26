@@ -545,6 +545,22 @@ FROM `qr_credentials` c
 JOIN `passengers` p ON p.id = c.passenger_id
 LEFT JOIN `users` u ON u.id = c.created_by;
 
+-- O chat pode existir apenas em volumes que já passaram pela migração da API.
+-- Limpa primeiro as mensagens e depois as conversas para liberar os usuários.
+SET @chat_messages_cleanup = IF(
+  EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'app_db' AND TABLE_NAME = 'chat_messages'),
+  'DELETE FROM `app_db`.`chat_messages`', 'SELECT 1');
+PREPARE chat_messages_statement FROM @chat_messages_cleanup;
+EXECUTE chat_messages_statement;
+DEALLOCATE PREPARE chat_messages_statement;
+
+SET @chat_conversations_cleanup = IF(
+  EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'app_db' AND TABLE_NAME = 'chat_conversations'),
+  'DELETE FROM `app_db`.`chat_conversations`', 'SELECT 1');
+PREPARE chat_conversations_statement FROM @chat_conversations_cleanup;
+EXECUTE chat_conversations_statement;
+DEALLOCATE PREPARE chat_conversations_statement;
+
 DELETE FROM `nfc_credentials`;
 DELETE FROM `qr_credentials`;
 DELETE FROM `vehicle_locations`;
